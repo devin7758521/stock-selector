@@ -97,21 +97,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
     except Exception as e:
         logger.warning(f"[spot/eastmoney] 失败: {e}")
 
-    # 3. 新浪财经实时行情（备用）
-    try:
-        import json
-        # 使用新浪财经的另一个接口，数据结构更稳定
-        url = "https://hq.sinajs.cn/list=sh000001,sz399001"
-        resp = requests.get(url, headers=random_headers(), timeout=15)
-        resp.raise_for_status()
-        # 新浪财经的实时行情接口返回格式为JS变量，需要解析
-        content = resp.text
-        # 这里简化处理，仅作为示例，实际使用时需要根据具体接口调整
-        logger.info("[spot/sina] 实时快照获取尝试成功")
-    except Exception as e:
-        logger.warning(f"[spot/sina] 失败: {e}")
-
-    # 4. 备选方案：直接从日K数据中获取最新成交额
+    # 3. 备选方案：直接从日K数据中获取最新成交额
     try:
         # 这里可以实现一个简单的备选方案，从日K数据中获取最新成交额
         # 但考虑到性能问题，这里暂时跳过
