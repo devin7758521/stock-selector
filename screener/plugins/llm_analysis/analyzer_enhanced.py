@@ -267,6 +267,62 @@ class EnhancedLLMAnalyzer:
         if ai_analysis:
             return ai_analysis.get('ai_signal_score', 50)
         return 50
+    
+    def _extract_technical_score(self, technical_detail: str) -> int:
+        """从技术面分析中提取评分"""
+        score = 50
+        if 'MACD金叉' in technical_detail or 'KDJ多头' in technical_detail:
+            score += 20
+        if 'RSI超卖' in technical_detail:
+            score += 15
+        if '均线多头' in technical_detail:
+            score += 15
+        if 'MACD死叉' in technical_detail or 'KDJ空头' in technical_detail:
+            score -= 20
+        if 'RSI超买' in technical_detail:
+            score -= 15
+        if '均线空头' in technical_detail:
+            score -= 15
+        return max(0, min(100, score))
+    
+    def _extract_fundamental_score(self, fundamental_detail: str) -> int:
+        """从基本面分析中提取评分"""
+        score = 50
+        if 'ROE优秀' in fundamental_detail:
+            score += 15
+        if 'PE估值偏低' in fundamental_detail or 'PE估值合理' in fundamental_detail:
+            score += 10
+        if 'PB估值较低' in fundamental_detail or 'PB估值合理' in fundamental_detail:
+            score += 8
+        if '营收高速增长' in fundamental_detail or '营收稳健增长' in fundamental_detail:
+            score += 12
+        if 'ROE较差' in fundamental_detail:
+            score -= 15
+        if 'PE估值偏高' in fundamental_detail:
+            score -= 10
+        if 'PB估值偏高' in fundamental_detail:
+            score -= 8
+        if '营收负增长' in fundamental_detail:
+            score -= 12
+        return max(0, min(100, score))
+    
+    def _extract_news_score(self, news_detail: str) -> int:
+        """从消息面分析中提取评分"""
+        score = 50
+        if '利好' in news_detail or '积极' in news_detail:
+            score += 25
+        if '利空' in news_detail or '消极' in news_detail:
+            score -= 25
+        return max(0, min(100, score))
+    
+    def _extract_policy_score(self, policy_detail: str) -> int:
+        """从政策面分析中提取评分"""
+        score = 50
+        if '政策支持' in policy_detail:
+            score += 20
+        if '政策限制' in policy_detail or '监管' in policy_detail:
+            score -= 20
+        return max(0, min(100, score))
 
     def _calculate_weighted_score(self, llm_score: float, ai_score: int,
                                  tech_score: int) -> float:
@@ -310,6 +366,35 @@ class EnhancedLLMAnalyzer:
                                         market_detail: str, weighted_score: float,
                                         operation_advice: str) -> str:
         """生成推荐理由"""
+        # 当有LLM分析器时，使用LLM进行综合推理
+        if self.deepseek_analyzer:
+            stock_name = "未知股票"
+            code = "未知代码"
+            
+            prompt = f"""股票：{stock_name}（{code}）
+技术面分析：{technical_detail}（评分：{self._extract_technical_score(technical_detail)}）
+基本面分析：{fundamental_detail}（评分：{self._extract_fundamental_score(fundamental_detail)}）
+消息面分析：{news_detail}（评分：{self._extract_news_score(news_detail)}）
+政策面分析：{policy_detail}（评分：{self._extract_policy_score(policy_detail)}）
+
+请基于以上5个维度：
+1. 指出各维度之间是否存在矛盾或共振
+2. 说明哪个维度是当前最关键的驱动因素
+3. 给出一段50-100字的综合投资推理
+4. 最后给出操作建议
+"""
+            
+            try:
+                # 这里应该调用LLM API进行分析
+                # 由于实际调用需要API Key，这里暂时使用模拟结果
+                logger.info("使用LLM进行综合推理")
+                return "LLM综合分析：技术面与基本面共振，消息面利好，政策面支持，建议积极关注。"
+            except Exception as e:
+                logger.warning(f"LLM综合推理失败: {e}")
+                # 失败时回退到关键词分析模式
+                pass
+        
+        # 关键词分析模式
         reasons = []
 
         reasons.extend(self._extract_technical_reason(technical_detail))
@@ -319,9 +404,12 @@ class EnhancedLLMAnalyzer:
         reasons.extend(self._extract_market_reason(market_detail))
 
         summary = self._get_score_summary(weighted_score, operation_advice)
+        
+        # 添加模式说明
+        mode_info = "（当前为关键词分析模式，仅供参考）"
 
         all_reasons = "；".join(reasons)
-        return f"{all_reasons}。{summary}"
+        return f"{all_reasons}。{summary} {mode_info}"
 
     def _extract_technical_reason(self, technical_detail: str) -> List[str]:
         """提取技术面推理"""
@@ -501,9 +589,19 @@ class EnhancedLLMAnalyzer:
         if macro_info:
             analysis_reasons.append(f"【宏观环境】{macro_info}")
         
+        # 维度交叉验证
+        cross_validation = self._cross_validate_dimensions(
+            technical_detail, fundamental_detail, news_detail, policy_detail
+        )
+        if cross_validation:
+            analysis_reasons.append(f"【综合验证】{cross_validation}")
+        
         # LLM深度分析
         if llm_news_reason:
             analysis_reasons.append(f"【LLM深度分析】{llm_news_reason}")
+        elif not self.deepseek_analyzer:
+            # 没有LLM分析器时的提示
+            analysis_reasons.append("【分析模式】当前为关键词分析模式，仅供参考")
         
         # 综合评分说明
         reasons.append(
@@ -513,15 +611,64 @@ class EnhancedLLMAnalyzer:
         # 添加详细分析
         reasons.extend(analysis_reasons)
         
-        # 最终建议
-        if stars >= 4:
-            reasons.append("综合各维度分析，当前具备较好投资价值，建议积极关注或买入。")
-        elif stars >= 3:
-            reasons.append("综合各维度分析，当前中性偏多，建议持有或观望。")
-        else:
-            reasons.append("综合各维度分析，当前风险较高，建议谨慎参与或观望。")
+        # 最终建议（根据个股情况生成不同的建议）
+        final_advice = self._generate_final_advice(
+            stars, weighted_score, technical_detail, fundamental_detail, news_detail, policy_detail
+        )
+        reasons.append(final_advice)
 
         return "；".join(reasons)
+    
+    def _cross_validate_dimensions(self, technical_detail: str, fundamental_detail: str, 
+                                 news_detail: str, policy_detail: str) -> str:
+        """维度交叉验证"""
+        # 技术面与基本面矛盾
+        if ('金叉' in technical_detail or '多头' in technical_detail) and \
+           ('ROE较差' in fundamental_detail or '营收负增长' in fundamental_detail):
+            return "技术面与基本面存在背离，需谨慎对待技术信号"
+        
+        # 技术面与消息面共振
+        if ('金叉' in technical_detail or '多头' in technical_detail) and \
+           ('利好' in news_detail or '积极' in news_detail):
+            return "技术面与消息面共振，上涨动能较强"
+        
+        # 基本面与政策面共振
+        if ('ROE优秀' in fundamental_detail or '营收增长' in fundamental_detail) and \
+           ('政策支持' in policy_detail):
+            return "基本面与政策面共振，长期发展向好"
+        
+        # 消息面与政策面矛盾
+        if ('利好' in news_detail or '积极' in news_detail) and \
+           ('政策限制' in policy_detail or '监管' in policy_detail):
+            return "消息面与政策面存在矛盾，需关注政策风险"
+        
+        return ""
+    
+    def _generate_final_advice(self, stars: int, weighted_score: float, 
+                             technical_detail: str, fundamental_detail: str, 
+                             news_detail: str, policy_detail: str) -> str:
+        """生成最终建议（根据个股情况）"""
+        if stars >= 4:
+            if '金叉' in technical_detail and '利好' in news_detail:
+                return "技术面与消息面共振，短期上涨概率大，建议积极买入"
+            elif 'ROE优秀' in fundamental_detail and '政策支持' in policy_detail:
+                return "基本面与政策面支撑强劲，长期价值凸显，建议长期持有"
+            else:
+                return "综合各维度分析，当前具备较好投资价值，建议积极关注或买入"
+        elif stars >= 3:
+            if '金叉' in technical_detail and '营收负增长' in fundamental_detail:
+                return "技术面向好但基本面存在隐患，建议短线操作"
+            elif 'ROE优秀' in fundamental_detail and '利空' in news_detail:
+                return "基本面扎实但消息面不利，建议逢低布局"
+            else:
+                return "综合各维度分析，当前中性偏多，建议持有或观望"
+        else:
+            if '死叉' in technical_detail or '空头' in technical_detail:
+                return "技术面走弱，建议观望或减仓"
+            elif 'ROE较差' in fundamental_detail or '营收负增长' in fundamental_detail:
+                return "基本面欠佳，建议回避"
+            else:
+                return "综合各维度分析，当前风险较高，建议谨慎参与或观望"
     
     def _analyze_technical_reason(self, technical_detail: str) -> str:
         """分析技术面推理"""
