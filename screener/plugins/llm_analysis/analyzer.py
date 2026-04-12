@@ -2,7 +2,7 @@
 """
 LLM 分析器模块
 
-Copyright (c) 2026 driverplus. All rights reserved.
+Copyright (c) 2026 stock selector. All rights reserved.
 """
 
 import logging

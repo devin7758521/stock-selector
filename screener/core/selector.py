@@ -15,7 +15,7 @@ from screener.filter import static_filter, calc_indicators, print_stats
 from screener.wecom import send_wecom, send_wecom_start
 from .plugin import PluginManager
 
-logger = logging.getLogger("driverplus.selector")
+logger = logging.getLogger("stock_selector.selector")
 
 
 class StockSelector:
@@ -93,7 +93,7 @@ class StockSelector:
         max_workers = req_cfg.get("max_workers", 3)
         
         logger.info("=" * 55)
-        logger.info("  driverplus 选股启动")
+        logger.info("  stock selector 选股启动")
         logger.info("=" * 55)
         
         # Step 0: 发送启动通知

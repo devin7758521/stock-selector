@@ -7,7 +7,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from abc import ABC, abstractmethod
 
-logger = logging.getLogger("justice.plugin")
+logger = logging.getLogger("stock_selector.plugin")
 
 
 class Plugin(ABC):
@@ -26,7 +26,7 @@ class Plugin(ABC):
         self.name = name
         self.config = config
         self.enabled = config.get("enabled", True)
-        self.logger = logging.getLogger(f"justice.plugin.{name}")
+        self.logger = logging.getLogger(f"stock_selector.plugin.{name}")
     
     @abstractmethod
     def process(self, stock_data: Dict[str, Any], df: Any, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:

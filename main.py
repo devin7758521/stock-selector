@@ -1,7 +1,7 @@
 """
 main.py
 =======
-driverplus 选股主入口
+stock selector 选股主入口
 
 运行方式：
     python main.py
@@ -12,7 +12,7 @@ GitHub Actions 中：
     - 将企业微信 webhook 设置在 Secrets（WECOM_WEBHOOK_URL）
     - 直接 python main.py 即可
 
-Copyright (c) 2026 driverplus. All rights reserved.
+Copyright (c) 2026 stock selector. All rights reserved.
 """
 
 import argparse
@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(n
 
 from screener.core import StockSelector
 
-logger = logging.getLogger("driverplus.main")
+logger = logging.getLogger("stock_selector.main")
 
 
 def run(config_path: str = "config.yaml"):
@@ -41,7 +41,7 @@ def run(config_path: str = "config.yaml"):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="driverplus 选股")
+    parser = argparse.ArgumentParser(description="stock selector 选股")
     parser.add_argument("--config", default="config.yaml", help="配置文件路径")
     args = parser.parse_args()
     run(config_path=args.config)

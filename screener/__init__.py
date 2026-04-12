@@ -1,5 +1,5 @@
 """
-screener - driverplus 选股核心模块
+screener - stock selector 选股核心模块
 
 模块结构：
   calendar.py    - A股真实交易日历，日K→周K聚合
@@ -15,3 +15,4 @@ screener - driverplus 选股核心模块
   from screener.wecom import send_wecom
   from screener.utils import load_config
 """
+

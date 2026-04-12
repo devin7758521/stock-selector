@@ -1,4 +1,4 @@
-name: JusticePlutus 选股
+name: stock selector 选股
 
 on:
   workflow_dispatch:   # 手动触发

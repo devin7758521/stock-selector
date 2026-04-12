@@ -2,7 +2,7 @@
 """
 LLM 分析插件
 
-Copyright (c) 2026 driverplus. All rights reserved.
+Copyright (c) 2026 stock selector. All rights reserved.
 """
 
 import sys
@@ -14,13 +14,13 @@ from screener.core.plugin import Plugin
 from .analyzer import LLMAnalyzer
 from .search_service import SearchService
 
-logger = logging.getLogger("driverplus.plugin.llm_analysis")
+logger = logging.getLogger("stock_selector.plugin.llm_analysis")
 
 
 class LLMAnalsysisPlugin(Plugin):
     """
     LLM 分析插件
-    集成 D:\github\JusticePlutus-main 的 AI 分析和新闻搜索功能
+    集成 stock selector 的 AI 分析和新闻搜索功能
     """
     
     def __init__(self, name: str, config: Dict[str, Any]):

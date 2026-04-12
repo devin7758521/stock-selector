@@ -1,16 +1,18 @@
 # =============================================
-# JusticePlutus 配置文件模板
+# stock selector 配置文件模板
 # =============================================
 # 使用说明：
 # 1. 复制此文件为 config.yaml
 # 2. 填入您的API密钥和配置
 
+# 数据源配置（可选）
 datasources:
-  tushare_token: ""  # Tushare API Token（可选）
-  joinquant_username: ""  # JoinQuant 用户名（可选）
-  joinquant_password: ""  # JoinQuant 密码（可选）
-  mairui_token: ""  # 迈瑞 API Token（可选）
+  tushare_token: ""  # Tushare API Token
+  joinquant_username: ""  # JoinQuant 用户名
+  joinquant_password: ""  # JoinQuant 密码
+  mairui_token: ""  # 迈瑞 API Token
 
+# 选股配置
 screener:
   price_min: 3  # 最低价格
   price_max: 70  # 最高价格
@@ -24,6 +26,7 @@ screener:
   spot_prefilter_amount: 200000000  # 预筛选成交额（2亿）
   weekly_mode: "realtime"  # 周K模式：realtime 或 completed
 
+# 请求配置
 request:
   max_workers: 8  # 最大工作线程数
   delay_min: 0.2  # 最小延迟（秒）
@@ -31,17 +34,28 @@ request:
   max_retries: 3  # 最大重试次数
   retry_backoff: 2  # 重试退避系数
 
+# 企业微信配置
 wecom:
-  webhook_url: ""  # 企业微信 Webhook URL（可选）
+  webhook_url: ""  # 企业微信 Webhook URL
 
+# LLM 插件配置
 plugins:
-  ai_analysis:
-    enabled: true  # 是否启用 AI 分析
   llm_analysis:
-    enabled: true  # 是否启用 LLM 分析
+    enabled: true
+    # API配置（可通过环境变量覆盖）
+    api_key: ""  # DeepSeek API Key
+    model: "deepseek"  # 模型类型：deepseek / gemini / local
+    weights:
+      llm: 0.5  # LLM评分权重
+      ai: 0.3   # AI评分权重
+      technical: 0.2  # 技术指标权重
+
+  # 其他插件...
+  ai_analysis:
+    enabled: true
   stock_list_analysis:
-    enabled: true  # 是否启用股票列表分析
+    enabled: true
   technical_analysis:
-    enabled: true  # 是否启用技术指标分析
+    enabled: true
   fundamental_analysis:
-    enabled: true  # 是否启用基本面分析
+    enabled: true

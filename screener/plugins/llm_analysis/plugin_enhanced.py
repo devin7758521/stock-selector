@@ -11,7 +11,7 @@ LLM 分析插件（增强版）
 
 权重机制：LLM(50%) > AI(30%) > 技术指标(20%)
 
-Copyright (c) 2026 driverplus. All rights reserved.
+Copyright (c) 2026 stock selector. All rights reserved.
 """
 
 import sys
@@ -23,7 +23,7 @@ from screener.core.plugin import Plugin
 from .analyzer_enhanced import EnhancedLLMAnalyzer
 from .search_service import SearchService
 
-logger = logging.getLogger("driverplus.plugin.llm_analysis")
+logger = logging.getLogger("stock_selector.plugin.llm_analysis")
 
 
 class LLMAnalsysisPlugin(Plugin):
@@ -58,17 +58,17 @@ class LLMAnalsysisPlugin(Plugin):
             是否初始化成功
         """
         try:
-            # 获取LLM配置
+            # 获取LLM配置（环境变量优先）
             llm_config = self.config.get('llm', {})
-            api_key = llm_config.get('api_key')
-            model = llm_config.get('model', 'local')
-            
+            api_key = llm_config.get('api_key') or os.environ.get('DEEPSEEK_API_KEY', '')
+            model = llm_config.get('model') or os.environ.get('LLM_MODEL', 'deepseek')
+
             # 初始化增强版LLM分析器
             self.analyzer = EnhancedLLMAnalyzer(api_key=api_key, model=model)
-            
+
             # 初始化搜索服务
             self.search_service = SearchService()
-            
+
             logger.info(f"LLM 分析插件初始化成功（模型: {model}）")
             return True
         except Exception as e:
@@ -201,7 +201,7 @@ class LLMAnalsysisPlugin(Plugin):
         # 打星理由
         star_reason = stock_data.get('llm_star_reason', '')
         if star_reason:
-            output_parts.append(f"理由={star_reason[:50]}...")
+            output_parts.append(f"理由={star_reason}")
         
         return "  ".join(output_parts)
     

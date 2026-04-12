@@ -2,7 +2,7 @@
 """
 股票列表分析插件
 
-Copyright (c) 2026 driverplus. All rights reserved.
+Copyright (c) 2026 stock selector. All rights reserved.
 """
 
 import sys
@@ -17,7 +17,7 @@ from screener.ai.stock_analyzer import analyze_stock
 from screener.plugins.llm_analysis.plugin import LLMAnalsysisPlugin
 from screener.eastmoney_utils import get_eastmoney_watchlist, get_eastmoney_portfolio, get_tenjqka_watchlist, get_tenjqka_portfolio, get_longbridge_watchlist, get_longbridge_portfolio
 
-logger = logging.getLogger("justice.plugins.stock_list_analysis")
+logger = logging.getLogger("stock_selector.plugins.stock_list_analysis")
 
 
 class StockListAnalysisPlugin(Plugin):

@@ -24,7 +24,7 @@ import requests
 
 from screener.utils import random_headers
 
-logger = logging.getLogger("justice.datasources")
+logger = logging.getLogger("stock_selector.datasources")
 
 _COLS = ["date", "open", "high", "low", "close", "volume", "amount"]
 

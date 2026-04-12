@@ -23,7 +23,7 @@ from screener.calendar import resample_weekly, get_current_week_info
 from screener.datasources import fetch_spot_data
 from screener.utils.time_utils import is_market_open, is_trading_day, should_use_today_data
 
-logger = logging.getLogger("justice.filter")
+logger = logging.getLogger("stock_selector.filter")
 
 # ── 漏斗统计（线程安全）─────────────────────────────────────
 _lock = threading.Lock()

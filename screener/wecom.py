@@ -11,7 +11,7 @@ from datetime import datetime
 
 import requests
 
-logger = logging.getLogger("justice.wecom")
+logger = logging.getLogger("stock_selector.wecom")
 
 
 def send_wecom_start(cfg: dict) -> bool:
@@ -31,7 +31,7 @@ def send_wecom_start(cfg: dict) -> bool:
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    content = f"""🚀 JusticePlutus 选股系统启动
+    content = f"""🚀 stock selector 选股系统启动
 
 启动时间: {now}
 系统状态: 开始选股...
@@ -81,84 +81,58 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
     if not results:
         content = f"📊 选股播报 {today}\n\n今日无符合条件的标的。"
     else:
-        lines = [f"📊 选股播报 {today}，共 {len(results)} 只\n"]
-        for r in results:
+        # 只推送前10只股票
+        top_results = results[:10]
+        lines = [f"📊 选股播报 {today}", f"共 {len(results)} 只\n"]
+        for r in top_results:
             # 基础信息
             stock_line = f"{r['name']}（{r['code']}）"
-            
-            # 添加价格、偏离、日成交额
-            if 'price' in r:
-                stock_line += f"  价格={r['price']}"
-            if 'deviation' in r:
-                stock_line += f"  偏离={r['deviation']:.2f}%"
-            if 'daily_amount_yi' in r:
-                stock_line += f"  日成交额={r['daily_amount_yi']}亿"
-            
-            # 添加技术指标
-            if 'tech_indicators' in r:
-                tech = r['tech_indicators']
-                stock_line += f"  技术指标: MACD={tech.get('MACD', 'N/A')}, KDJ=({tech.get('KDJ', {}).get('K', 'N/A')},{tech.get('KDJ', {}).get('D', 'N/A')},{tech.get('KDJ', {}).get('J', 'N/A')}), RSI={tech.get('RSI', 'N/A'):.1f}"
-            
-            # 添加 AI 信号和评分
-            if 'ai_signal' in r:
-                stock_line += f"  AI信号={r['ai_signal']}"
-            if 'ai_score' in r:
-                stock_line += f"  AI评分={r['ai_score']}"
-            if 'ai_rating' in r:
-                stock_line += f"  评级={r['ai_rating']}"
-            if 'ai_sentiment' in r:
-                stock_line += f"  情绪={r['ai_sentiment']}"
-            
-            # 添加 LLM 评级信息
-            if 'llm_stars' in r:
-                stars = r['llm_stars']
-                stock_line += f"  LLM评级={'★' * stars}{'☆' * (5 - stars)}({stars}星)"
-            if 'llm_operation_advice' in r:
-                advice = r['llm_operation_advice']
-                stock_line += f"  建议={advice}"
-            if 'llm_confidence_level' in r:
-                confidence = r['llm_confidence_level']
-                stock_line += f"  置信度={confidence}"
-            
-            # 添加加权分和理由
-            if 'weighted_score' in r:
-                stock_line += f"  加权分={r['weighted_score']:.1f}"
-            if 'reason' in r:
-                stock_line += f"  理由={r['reason']}"
-            
             lines.append(stock_line)
             
-            # 添加 LLM 深度分析报告
-            if 'llm_analysis_summary' in r:
-                lines.append("")
-                lines.append("================================================================================")
-                lines.append("【LLM深度分析报告】")
-                lines.append("================================================================================")
-                lines.append("")
-                lines.append(f"股票: {r['name']} ({r['code']})")
-                lines.append("")
-                
-                if 'llm_stars' in r:
-                    stars = r['llm_stars']
-                    lines.append(f"【综合评级】{'★' * stars}{'☆' * (5 - stars)} ({stars}星) - 加权总分: {r.get('weighted_score', 'N/A'):.1f}")
-                
-                lines.append("")
-                lines.append("【推荐理由】")
-                if 'llm_analysis_summary' in r:
-                    lines.append(r['llm_analysis_summary'])
-                
-                lines.append("")
-                if 'llm_operation_advice' in r:
-                    lines.append(f"【操作建议】{r['llm_operation_advice']}（置信度: {r.get('llm_confidence_level', 'N/A')}）")
-                if 'llm_trend_prediction' in r:
-                    lines.append(f"【趋势预测】{r['llm_trend_prediction']}")
-                
-                lines.append("")
-                lines.append("【风险提示】")
-                lines.append("投资有风险，入市需谨慎")
-                lines.append("")
-                lines.append("================================================================================")
-                lines.append("")
+            # 添加价格
+            if 'price' in r:
+                lines.append(f"价格: {r['price']}")
+            
+            # 添加偏离
+            if 'vol_deviation_pct' in r:
+                lines.append(f"偏离: {r['vol_deviation_pct']}%")
+            
+            # 添加AI信号
+            if 'ai_buy_signal' in r:
+                lines.append(f"AI信号: {r['ai_buy_signal']}")
+            
+            # 添加LLM评级
+            if 'llm_stars' in r:
+                stars = r['llm_stars']
+                lines.append(f"LLM评级: {stars}星")
+
+            # 添加建议
+            if 'llm_operation_advice' in r:
+                lines.append(f"建议: {r['llm_operation_advice']}")
+
+            # 添加理由（提取核心分析结论）
+            if 'llm_star_reason' in r:
+                reason = r['llm_star_reason']
+                # 去掉评分计算部分，保留核心结论
+                # 格式：二星评级，谨慎参与；加权总分50.2分（LLM:50.5×50% + AI:50×30% + 技术:...）；...
+                if '；' in reason:
+                    parts = reason.split('；')
+                    clean_parts = []
+                    for p in parts:
+                        # 跳过评分计算部分
+                        if '加权总分' in p or '×50%' in p or '×30%' in p or '×20%' in p:
+                            continue
+                        if p.strip():
+                            clean_parts.append(p.strip())
+                    if clean_parts:
+                        reason = '；'.join(clean_parts)
+                    else:
+                        reason = ''
+                if reason:
+                    lines.append(f"理由: {reason}")
+
+            # 空行分隔
+            lines.append("")
         
         content = "\n".join(lines)
 
