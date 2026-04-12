@@ -31,5 +31,8 @@ jobs:
           JQ_PASSWORD:       ${{ secrets.JQ_PASSWORD }}
           MAIRUI_TOKEN:      ${{ secrets.MAIRUI_TOKEN }}
           WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+          DEEPSEEK_API_KEY:  ${{ secrets.DEEPSEEK_API_KEY }}
+          LLM_MODEL:         ${{ secrets.LLM_MODEL }}
+          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
         run: |
           python main.py
