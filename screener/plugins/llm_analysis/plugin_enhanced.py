@@ -63,7 +63,7 @@ class LLMAnalsysisPlugin(Plugin):
             model = llm_config.get('model') or os.environ.get('LLM_MODEL', 'deepseek')
 
             # 根据模型选择对应的API Key
-            if model == "gemini":
+            if "gemini" in model.lower():
                 api_key = llm_config.get('api_key') or os.environ.get('GEMINI_API_KEY', '')
             else:
                 api_key = llm_config.get('api_key') or os.environ.get('DEEPSEEK_API_KEY', '')
