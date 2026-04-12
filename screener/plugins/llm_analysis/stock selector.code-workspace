@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../.."
+		},
+		{
+			"name": "stock-selector",
+			"path": "../../../../stock selector V1/stock-selector"
+		}
+	],
+	"settings": {}
+}

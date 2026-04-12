@@ -1,0 +1,16 @@
+akshare
+baostock
+pandas
+numpy
+requests
+pyyaml
+tqdm
+litellm
+json-repair
+sqlalchemy
+newspaper3k
+lxml[html_clean]
+PyQt6
+tenacity
+beautifulsoup4
+
