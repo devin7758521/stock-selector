@@ -368,9 +368,15 @@ class EastMoneySearchProvider(BaseSearchProvider):
                     if not link.startswith('http'):
                         link = f"http://so.eastmoney.com{link}"
                     
-                    # 过滤广告内容
-                    ad_keywords = ['东方财富免费版', '东方财富Level-2', '东方财富策略', '广告', '免费']
+                    # 过滤广告 / 产品入口（东财搜索页常混入非新闻链接）
+                    ad_keywords = [
+                        '东方财富免费版', '东方财富Level-2', '东方财富策略', '广告', '免费',
+                        '妙想', '投研助理', 'Choice金融', 'Choice', '金融终端', 'Level-2',
+                        '下载', '客户端', '电脑版', '手机版',
+                    ]
                     if any(keyword in title for keyword in ad_keywords):
+                        continue
+                    if len(title) < 6:
                         continue
                     
                     published_at = time_elem.text.strip() if time_elem else ""
@@ -775,11 +781,10 @@ class GlobalFinanceSearchProvider(BaseSearchProvider):
                     if title and url:
                         results.append(SearchResult(
                             title=title,
-                            url=url,
                             snippet=snippet,
+                            url=url,
                             source="Global Finance",
-                            publish_date="",
-                            relevance_score=80
+                            published_date=None,
                         ))
 
             except Exception as e:
@@ -828,11 +833,10 @@ class GlobalFinanceSearchProvider(BaseSearchProvider):
         if matched_keywords:
             results.append(SearchResult(
                 title=f"Global Markets: {', '.join(matched_keywords)} Latest Updates",
-                url="https://www.cnbc.com/international/",
                 snippet=f"最新全球财经动态：{', '.join(matched_keywords)}相关新闻汇总，来自华尔街日报、路透社、彭博等权威媒体。",
+                url="https://www.cnbc.com/international/",
                 source="Global Finance Aggregator",
-                publish_date="",
-                relevance_score=75
+                published_date=None,
             ))
 
         return results[:max_results]

@@ -178,10 +178,22 @@ class PluginManager:
         """
         获取所有激活的插件
         
+        执行顺序：技术面、基本面、AI 等先写入 stock_data，最后跑 llm_analysis，
+        否则 LLM 侧会一直看到「无技术指标/无基本面」且读不到 AI 评分。
+        
         Returns:
             激活的插件列表
         """
-        return [plugin for plugin in self.plugins.values() if plugin.enabled]
+        priority = {
+            "technical_analysis": 10,
+            "fundamental_analysis": 20,
+            "ai_analysis": 30,
+            "stock_list_analysis": 40,
+            "llm_analysis": 100,
+        }
+        active = [p for p in self.plugins.values() if p.enabled]
+        active.sort(key=lambda p: (priority.get(p.name, 55), p.name))
+        return active
     
     def get_plugin(self, plugin_name: str) -> Optional[Plugin]:
         """

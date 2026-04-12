@@ -110,14 +110,28 @@ class LLMAnalysisPlugin(Plugin):
             # 搜索新闻
             news_context = self._search_news(code, name)
             
-            # 获取AI分析结果
+            # AI 插件把字段写在 stock_data 顶层，这里组装成 dict 供增强分析器使用
             ai_analysis = stock_data.get('ai_analysis')
-            
-            # 获取技术分析结果
-            technical_analysis = stock_data.get('technical_analysis')
-            
-            # 获取基本面分析结果
-            fundamental_analysis = stock_data.get('fundamental_analysis')
+            if ai_analysis is None and "ai_signal_score" in stock_data:
+                ai_analysis = {
+                    "ai_signal_score": stock_data.get("ai_signal_score", 50),
+                    "ai_buy_signal": stock_data.get("ai_buy_signal", "N/A"),
+                    "ai_trend_status": stock_data.get("ai_trend_status", "N/A"),
+                    "ai_rating_reason": stock_data.get("ai_rating_reason", "N/A"),
+                }
+
+            # 若配置顺序有误或技术插件失败，用 K 线就地补算一层（与技术分析插件一致）
+            technical_analysis = stock_data.get("technical_analysis")
+            if not technical_analysis and df is not None and not getattr(df, "empty", True):
+                from screener.plugins.technical_analysis.plugin import TechnicalAnalysisPlugin
+
+                _ta_patch = TechnicalAnalysisPlugin("_inline_", {}).process(
+                    stock_data, df, config
+                )
+                if _ta_patch and _ta_patch.get("technical_analysis"):
+                    technical_analysis = _ta_patch["technical_analysis"]
+
+            fundamental_analysis = stock_data.get("fundamental_analysis")
             
             # 执行增强版LLM分析
             result = self.analyzer.analyze(

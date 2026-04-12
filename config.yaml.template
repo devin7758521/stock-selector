@@ -38,8 +38,17 @@ request:
 wecom:
   webhook_url: ""  # 企业微信 Webhook URL
 
-# LLM 插件配置
+# 插件（执行顺序：按下方列表优先级自动排序，不必手写顺序）
+# technical → fundamental → ai → … → llm 最后，否则 LLM 读不到技术与基本面
 plugins:
+  technical_analysis:
+    enabled: true
+  fundamental_analysis:
+    enabled: true
+  ai_analysis:
+    enabled: true
+  stock_list_analysis:
+    enabled: true
   llm_analysis:
     enabled: true
     # API配置（可通过环境变量覆盖）
@@ -49,13 +58,3 @@ plugins:
       llm: 0.5  # LLM评分权重
       ai: 0.3   # AI评分权重
       technical: 0.2  # 技术指标权重
-
-  # 其他插件...
-  ai_analysis:
-    enabled: true
-  stock_list_analysis:
-    enabled: true
-  technical_analysis:
-    enabled: true
-  fundamental_analysis:
-    enabled: true
