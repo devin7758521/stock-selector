@@ -7,7 +7,7 @@ def is_market_open() -> bool:
     if now.weekday() >= 5:
         return False
     # 上午 9:30-11:30
-    if (9 <= now.hour < 11) or (now.hour == 11 and now.minute <= 30):
+    if (now.hour == 9 and now.minute >= 30) or (10 <= now.hour < 11) or (now.hour == 11 and now.minute <= 30):
         return True
     # 下午 13:00-15:00
     if 13 <= now.hour < 15:
