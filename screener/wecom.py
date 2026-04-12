@@ -5,6 +5,7 @@ wecom.py
 webhook_url 从 config 或环境变量 WECOM_WEBHOOK_URL 读取。
 """
 
+import os
 import logging
 from typing import List, Dict
 from datetime import datetime
@@ -12,6 +13,25 @@ from datetime import datetime
 import requests
 
 logger = logging.getLogger("stock_selector.wecom")
+
+
+def _get_feature_status(cfg: dict) -> str:
+    """获取功能模块状态"""
+    lines = ["【功能状态】"]
+    
+    llm_api_key = os.environ.get("DEEPSEEK_API_KEY", "") or cfg.get("plugins", {}).get("llm_analysis", {}).get("llm", {}).get("api_key", "")
+    if llm_api_key:
+        lines.append("✅ LLM分析: 已配置")
+    else:
+        lines.append("❌ LLM分析: 未配置（请配置 DEEPSEEK_API_KEY）")
+    
+    news_api_key = os.environ.get("NEWS_API_KEY", "") or cfg.get("plugins", {}).get("llm_analysis", {}).get("news_api_key", "")
+    if news_api_key:
+        lines.append("✅ 新闻搜索: 已配置")
+    else:
+        lines.append("❌ 新闻搜索: 未配置（请配置 NEWS_API_KEY）")
+    
+    return "\n".join(lines)
 
 
 def send_wecom_start(cfg: dict) -> bool:
@@ -30,11 +50,14 @@ def send_wecom_start(cfg: dict) -> bool:
         return False
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    feature_status = _get_feature_status(cfg)
     
     content = f"""🚀 stock selector 选股系统启动
 
 启动时间: {now}
 系统状态: 开始选股...
+
+{feature_status}
 
 请稍候，选股完成后将推送结果。"""
     
@@ -81,45 +104,35 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
     if not results:
         content = f"📊 选股播报 {today}\n\n今日无符合条件的标的。"
     else:
-        # 只推送前10只股票
+        feature_status = _get_feature_status(cfg)
         top_results = results[:10]
-        lines = [f"📊 选股播报 {today}", f"共 {len(results)} 只\n"]
+        content_lines = [f"📊 选股播报 {today}", f"共 {len(results)} 只\n", feature_status, ""]
+        
         for r in top_results:
-            # 基础信息
             stock_line = f"{r['name']}（{r['code']}）"
-            lines.append(stock_line)
+            content_lines.append(stock_line)
             
-            # 添加价格
             if 'price' in r:
-                lines.append(f"价格: {r['price']}")
+                content_lines.append(f"价格: {r['price']}")
             
-            # 添加偏离
             if 'vol_deviation_pct' in r:
-                lines.append(f"偏离: {r['vol_deviation_pct']}%")
+                content_lines.append(f"偏离: {r['vol_deviation_pct']}%")
             
-            # 添加AI信号
             if 'ai_buy_signal' in r:
-                lines.append(f"AI信号: {r['ai_buy_signal']}")
+                content_lines.append(f"AI信号: {r['ai_buy_signal']}")
             
-            # 添加LLM评级
             if 'llm_stars' in r:
-                stars = r['llm_stars']
-                lines.append(f"LLM评级: {stars}星")
+                content_lines.append(f"LLM评级: {r['llm_stars']}星")
 
-            # 添加建议
             if 'llm_operation_advice' in r:
-                lines.append(f"建议: {r['llm_operation_advice']}")
+                content_lines.append(f"建议: {r['llm_operation_advice']}")
 
-            # 添加理由（提取核心分析结论）
             if 'llm_star_reason' in r:
                 reason = r['llm_star_reason']
-                # 去掉评分计算部分，保留核心结论
-                # 格式：二星评级，谨慎参与；加权总分50.2分（LLM:50.5×50% + AI:50×30% + 技术:...）；...
                 if '；' in reason:
                     parts = reason.split('；')
                     clean_parts = []
                     for p in parts:
-                        # 跳过评分计算部分
                         if '加权总分' in p or '×50%' in p or '×30%' in p or '×20%' in p:
                             continue
                         if p.strip():
@@ -129,13 +142,12 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
                     else:
                         reason = ''
                 if reason:
-                    lines.append(f"理由: {reason}")
+                    content_lines.append(f"理由: {reason}")
 
-            # 空行分隔
-            lines.append("")
+            content_lines.append("")
         
-        content = "\n".join(lines)
-
+        content = "\n".join(content_lines)
+        
     payload = {
         "msgtype": "text",
         "text": {
