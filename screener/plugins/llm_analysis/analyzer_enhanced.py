@@ -95,6 +95,8 @@ class EnhancedLLMAnalyzer:
                 logger.info(f"已初始化{LLMNewsAnalyzer.__name__}新闻分析器 (模型: {model})")
             except ImportError as e:
                 logger.warning(f"无法导入LLM分析器: {e}")
+        else:
+            logger.info(f"LLM分析器未初始化: api_key={'有' if api_key else '无'}, model={model}")
 
     def analyze(self, context: Dict[str, Any], news_context: Optional[str],
                 ai_analysis: Optional[Dict] = None,
@@ -462,38 +464,179 @@ class EnhancedLLMAnalyzer:
         }
         reasons.append(star_desc.get(stars, "评级未知"))
 
+        # 详细的推理分析
+        analysis_reasons = []
+        
+        # 技术面推理
+        if technical_detail and technical_detail != "N/A":
+            tech_reason = self._analyze_technical_reason(technical_detail)
+            if tech_reason:
+                analysis_reasons.append(f"【技术面】{tech_reason}")
+        
+        # 基本面推理
+        if fundamental_detail and fundamental_detail != "N/A":
+            fund_reason = self._analyze_fundamental_reason(fundamental_detail)
+            if fund_reason:
+                analysis_reasons.append(f"【基本面】{fund_reason}")
+        
+        # 消息面推理
+        if news_detail and news_detail != "N/A":
+            news_reason = self._analyze_news_reason(news_detail, news_headlines)
+            if news_reason:
+                analysis_reasons.append(f"【消息面】{news_reason}")
+        
+        # 政策面推理
+        if policy_detail and policy_detail != "N/A":
+            policy_reason = self._analyze_policy_reason(policy_detail, policy_info)
+            if policy_reason:
+                analysis_reasons.append(f"【政策面】{policy_reason}")
+        
+        # 市场环境推理
+        if market_detail and market_detail != "N/A":
+            market_reason = self._analyze_market_reason(market_detail)
+            if market_reason:
+                analysis_reasons.append(f"【市场环境】{market_reason}")
+        
+        # 宏观环境推理
+        if macro_info:
+            analysis_reasons.append(f"【宏观环境】{macro_info}")
+        
+        # LLM深度分析
+        if llm_news_reason:
+            analysis_reasons.append(f"【LLM深度分析】{llm_news_reason}")
+        
+        # 综合评分说明
         reasons.append(
             f"综合评分{weighted_score:.1f}分（LLM深度推理{llm_score:.1f}×50% + AI情绪{ai_score}×30% + 技术指标{tech_score}×20%）"
         )
-
-        if technical_detail and technical_detail != "N/A":
-            reasons.append(f"【技术面】{technical_detail}")
-
-        if fundamental_detail and fundamental_detail != "N/A":
-            reasons.append(f"【基本面】{fundamental_detail}")
-
-        if news_detail and news_detail != "N/A":
-            reasons.append(f"【消息面】{news_detail}")
-
-        if policy_detail and policy_detail != "N/A":
-            reasons.append(f"【政策面】{policy_detail}")
-
-        if market_detail and market_detail != "N/A":
-            reasons.append(f"【市场环境】{market_detail}")
-
-        if llm_news_reason:
-            reasons.append(f"【LLM深度推理】{llm_news_reason}")
-
-        if macro_info and macro_info not in ('', 'N/A'):
-            reasons.append(f"【国内外经济形势】{macro_info}")
-
-        if policy_info and policy_info not in ('', 'N/A'):
-            reasons.append(f"【行业政策动态】{policy_info}")
-
-        if news_headlines and news_headlines not in ('', 'N/A'):
-            reasons.append(f"【重大事件】{news_headlines}")
+        
+        # 添加详细分析
+        reasons.extend(analysis_reasons)
+        
+        # 最终建议
+        if stars >= 4:
+            reasons.append("综合各维度分析，当前具备较好投资价值，建议积极关注或买入。")
+        elif stars >= 3:
+            reasons.append("综合各维度分析，当前中性偏多，建议持有或观望。")
+        else:
+            reasons.append("综合各维度分析，当前风险较高，建议谨慎参与或观望。")
 
         return "；".join(reasons)
+    
+    def _analyze_technical_reason(self, technical_detail: str) -> str:
+        """分析技术面推理"""
+        reasons = []
+        
+        if 'MACD金叉' in technical_detail:
+            reasons.append("MACD金叉形成，中期趋势向好")
+        elif 'MACD死叉' in technical_detail:
+            reasons.append("MACD死叉形成，中期趋势转弱")
+        
+        if 'KDJ多头' in technical_detail:
+            reasons.append("KDJ处于多头区域，短期动能强劲")
+        elif 'KDJ空头' in technical_detail:
+            reasons.append("KDJ处于空头区域，短期动能不足")
+        
+        if 'RSI超买' in technical_detail:
+            reasons.append("RSI超买，短期可能回调")
+        elif 'RSI超卖' in technical_detail:
+            reasons.append("RSI超卖，短期可能反弹")
+        
+        if '均线多头' in technical_detail:
+            reasons.append("均线多头排列，长期趋势向上")
+        elif '均线空头' in technical_detail:
+            reasons.append("均线空头排列，长期趋势向下")
+        
+        if not reasons:
+            return technical_detail
+        return "；".join(reasons)
+    
+    def _analyze_fundamental_reason(self, fundamental_detail: str) -> str:
+        """分析基本面推理"""
+        reasons = []
+        
+        if 'ROE' in fundamental_detail:
+            if '高于行业平均' in fundamental_detail:
+                reasons.append("ROE高于行业平均，盈利能力较强")
+            elif '低于行业平均' in fundamental_detail:
+                reasons.append("ROE低于行业平均，盈利能力较弱")
+        
+        if 'PE' in fundamental_detail:
+            if '估值合理' in fundamental_detail:
+                reasons.append("PE估值合理，安全边际较高")
+            elif '估值偏高' in fundamental_detail:
+                reasons.append("PE估值偏高，存在调整风险")
+            elif '估值偏低' in fundamental_detail:
+                reasons.append("PE估值偏低，具有投资价值")
+        
+        if '营收增长' in fundamental_detail:
+            if '大幅增长' in fundamental_detail:
+                reasons.append("营收大幅增长，成长动能强劲")
+            elif '稳定增长' in fundamental_detail:
+                reasons.append("营收稳定增长，经营状况良好")
+            elif '负增长' in fundamental_detail:
+                reasons.append("营收负增长，成长动力不足")
+        
+        if not reasons:
+            return fundamental_detail
+        return "；".join(reasons)
+    
+    def _analyze_news_reason(self, news_detail: str, news_headlines: str) -> str:
+        """分析消息面推理"""
+        reasons = []
+        
+        if '利好' in news_detail or '积极' in news_detail:
+            if '业绩预增' in news_detail:
+                reasons.append("业绩预增，基本面预期向好")
+            if '大订单' in news_detail:
+                reasons.append("获得大订单，未来业绩有保障")
+            if '扩产' in news_detail:
+                reasons.append("产能扩张，长期增长可期")
+            if '政策支持' in news_detail:
+                reasons.append("政策支持，行业发展受益")
+        elif '利空' in news_detail or '消极' in news_detail:
+            if '业绩下滑' in news_detail:
+                reasons.append("业绩下滑，基本面承压")
+            if '减持' in news_detail:
+                reasons.append("股东减持，短期压力较大")
+            if '监管' in news_detail:
+                reasons.append("监管压力，行业不确定性增加")
+        
+        if news_headlines:
+            reasons.append(f"关键事件：{news_headlines}")
+        
+        if not reasons:
+            return news_detail
+        return "；".join(reasons)
+    
+    def _analyze_policy_reason(self, policy_detail: str, policy_info: str) -> str:
+        """分析政策面推理"""
+        reasons = []
+        
+        if '政策支持' in policy_detail:
+            reasons.append("政策支持，行业发展环境良好")
+        elif '政策收紧' in policy_detail:
+            reasons.append("政策收紧，行业面临调整压力")
+        
+        if policy_info:
+            reasons.append(f"具体政策：{policy_info}")
+        
+        if not reasons:
+            return policy_detail
+        return "；".join(reasons)
+    
+    def _analyze_market_reason(self, market_detail: str) -> str:
+        """分析市场环境推理"""
+        if '量能显著放大' in market_detail:
+            return "量能显著放大，市场活跃度高，资金流入明显"
+        elif '成交额充沛' in market_detail:
+            return "成交额充沛，流动性好，交易活跃"
+        elif '量能萎缩' in market_detail:
+            return "量能萎缩，市场活跃度低，资金参与意愿不强"
+        elif '成交额低迷' in market_detail:
+            return "成交额低迷，流动性不足，短期波动可能较大"
+        else:
+            return market_detail
 
     def _generate_summary(self, stock_name: str, code: str,
                          weighted_score: float, operation_advice: str,
