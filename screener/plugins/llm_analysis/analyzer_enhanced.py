@@ -217,7 +217,8 @@ class EnhancedLLMAnalyzer:
                 stars, weighted_score, llm_base_score, ai_score, tech_score,
                 technical_detail, fundamental_detail, news_detail,
                 policy_detail, market_detail, news_headlines, policy_info, macro_info,
-                llm_news_reason
+                llm_news_reason,
+                ai_analysis=ai_analysis,
             )
 
             analysis_summary = self._generate_summary(
@@ -381,36 +382,7 @@ class EnhancedLLMAnalyzer:
         operation_advice: str,
         ai_analysis: Optional[Dict],
     ) -> str:
-        """生成推荐理由：优先调用真实 LLM 综合推理，失败则回退规则摘要。"""
-        ai_hint = ""
-        if ai_analysis:
-            ai_hint = (
-                f"【AI插件】信号={ai_analysis.get('ai_buy_signal', 'N/A')}，"
-                f"评分={ai_analysis.get('ai_signal_score', 'N/A')}，"
-                f"趋势={ai_analysis.get('ai_trend_status', 'N/A')}。\n"
-            )
-
-        if self.deepseek_analyzer:
-            user_prompt = f"""标的：{stock_name}（{code}）
-{ai_hint}技术面：{technical_detail}
-（内部估计分：{self._extract_technical_score(technical_detail)}）
-基本面：{fundamental_detail}
-（内部估计分：{self._extract_fundamental_score(fundamental_detail)}）
-消息面：{news_detail}
-（内部估计分：{self._extract_news_score(news_detail)}）
-政策面：{policy_detail}
-（内部估计分：{self._extract_policy_score(policy_detail)}）
-市场环境：{market_detail}
-
-系统加权参考：加权分={weighted_score:.1f}（0-100 尺度下为模型内部分数），当前操作建议标签：{operation_advice}
-
-请完成：各维度是否共振或矛盾、当前更应信哪一类信息、80～200 字综合推理，并与操作建议标签一致收尾。"""
-            logger.info(f"请求 LLM 综合推理: {stock_name} ({code})")
-            llm_text = self.deepseek_analyzer.synthesize(user_prompt, max_tokens=800)
-            if llm_text:
-                return f"{llm_text}\n（LLM 综合推理）"
-            logger.warning("LLM 综合推理无有效返回，回退规则摘要")
-
+        """内部留存用简要结论（微信等渠道不展示长篇推理，故不再单独请求 LLM 综述）。"""
         reasons = []
         reasons.extend(self._extract_technical_reason(technical_detail))
         reasons.extend(self._extract_fundamental_reason(fundamental_detail))
@@ -419,14 +391,8 @@ class EnhancedLLMAnalyzer:
         reasons.extend(self._extract_market_reason(market_detail))
 
         summary = self._get_score_summary(weighted_score, operation_advice)
-        mode_info = (
-            "（规则摘要模式：未调用 LLM 或 LLM 不可用，仅供参考）"
-            if self.deepseek_analyzer
-            else "（规则摘要模式：未配置 LLM API，仅供参考）"
-        )
-
         all_reasons = "；".join(reasons)
-        return f"{all_reasons}。{summary} {mode_info}"
+        return f"{all_reasons}。{summary}"
 
     def _extract_technical_reason(self, technical_detail: str) -> List[str]:
         """提取技术面推理"""
@@ -548,6 +514,13 @@ class EnhancedLLMAnalyzer:
         else:
             return 1
 
+    @staticmethod
+    def _clip(text: str, max_len: int = 180) -> str:
+        t = (text or "").replace("\n", " ").strip()
+        if len(t) <= max_len:
+            return t
+        return t[: max_len - 1] + "…"
+
     def _generate_star_reason(self, stars: int, weighted_score: float,
                              llm_score: float, ai_score: int, tech_score: int,
                              technical_detail: str, fundamental_detail: str,
@@ -556,110 +529,88 @@ class EnhancedLLMAnalyzer:
                              news_headlines: str = "",
                              policy_info: str = "",
                              macro_info: str = "",
-                             llm_news_reason: str = "") -> str:
-        """生成打星理由"""
-        reasons = []
-
+                             llm_news_reason: str = "",
+                             ai_analysis: Optional[Dict] = None) -> str:
+        """生成打星理由：五星须写清「凭什么五星」；不写权重公式与交叉验证等长篇推理。"""
         star_desc = {
             5: "五星评级，强烈推荐",
             4: "四星评级，值得关注",
             3: "三星评级，中性评价",
             2: "二星评级，谨慎参与",
-            1: "一星评级，不建议参与"
+            1: "一星评级，不建议参与",
         }
-        reasons.append(star_desc.get(stars, "评级未知"))
 
-        # 详细的推理分析
+        if stars == 5:
+            lines = [
+                "【五星依据】加权综合达到优秀档（约"
+                f"{weighted_score:.0f}分，内部模型口径），各维度要点如下："
+            ]
+            td = technical_detail if technical_detail and technical_detail != "N/A" else "暂无有效技术描述"
+            fd = fundamental_detail if fundamental_detail and fundamental_detail != "N/A" else "暂无有效基本面数据"
+            lines.append(f"①技术：{self._clip(td, 200)}")
+            lines.append(f"②基本面：{self._clip(fd, 200)}")
+            if llm_news_reason:
+                lines.append(f"③新闻解读（Gemini/LLM）：{self._clip(llm_news_reason, 220)}")
+            else:
+                nd = news_detail if news_detail and news_detail != "N/A" else "消息面中性或信息不足"
+                nh = f" 标题摘要：{self._clip(news_headlines, 120)}" if news_headlines else ""
+                lines.append(f"③消息面：{self._clip(nd, 160)}{nh}")
+            pd = policy_detail if policy_detail and policy_detail != "N/A" else "政策面影响不明显"
+            lines.append(f"④政策：{self._clip(pd, 140)}")
+            if policy_info:
+                lines.append(f"   政策关键词：{self._clip(policy_info, 120)}")
+            md = market_detail if market_detail and market_detail != "N/A" else "市场环境一般"
+            lines.append(f"⑤市场流动性：{self._clip(md, 140)}")
+            if macro_info:
+                lines.append(f"⑥宏观线索：{self._clip(macro_info, 160)}")
+            if ai_analysis:
+                lines.append(
+                    "⑦同步参考AI插件：信号="
+                    f"{ai_analysis.get('ai_buy_signal', 'N/A')}，评分="
+                    f"{ai_analysis.get('ai_signal_score', 'N/A')}。"
+                )
+            lines.append(
+                "【结论】多维度同时支撑或无明显短板，故授予五星（全市场五星名额最多保留2只，超出将降为四星）。"
+            )
+            return " ".join(lines)
+
+        reasons = [star_desc.get(stars, "评级未知")]
+
         analysis_reasons = []
-        
-        # 技术面推理
         if technical_detail and technical_detail != "N/A":
             tech_reason = self._analyze_technical_reason(technical_detail)
             if tech_reason:
                 analysis_reasons.append(f"【技术面】{tech_reason}")
-        
-        # 基本面推理
         if fundamental_detail and fundamental_detail != "N/A":
             fund_reason = self._analyze_fundamental_reason(fundamental_detail)
             if fund_reason:
                 analysis_reasons.append(f"【基本面】{fund_reason}")
-        
-        # 消息面推理
         if news_detail and news_detail != "N/A":
             news_reason = self._analyze_news_reason(news_detail, news_headlines)
             if news_reason:
                 analysis_reasons.append(f"【消息面】{news_reason}")
-        
-        # 政策面推理
         if policy_detail and policy_detail != "N/A":
             policy_reason = self._analyze_policy_reason(policy_detail, policy_info)
             if policy_reason:
                 analysis_reasons.append(f"【政策面】{policy_reason}")
-        
-        # 市场环境推理
         if market_detail and market_detail != "N/A":
             market_reason = self._analyze_market_reason(market_detail)
             if market_reason:
                 analysis_reasons.append(f"【市场环境】{market_reason}")
-        
-        # 宏观环境推理
         if macro_info:
-            analysis_reasons.append(f"【宏观环境】{macro_info}")
-        
-        # 维度交叉验证
-        cross_validation = self._cross_validate_dimensions(
-            technical_detail, fundamental_detail, news_detail, policy_detail
-        )
-        if cross_validation:
-            analysis_reasons.append(f"【综合验证】{cross_validation}")
-        
-        # LLM深度分析
+            analysis_reasons.append(f"【宏观环境】{self._clip(macro_info, 200)}")
         if llm_news_reason:
-            analysis_reasons.append(f"【LLM深度分析】{llm_news_reason}")
+            analysis_reasons.append(f"【新闻要点】{self._clip(llm_news_reason, 200)}")
         elif not self.deepseek_analyzer:
-            # 没有LLM分析器时的提示
-            analysis_reasons.append("【分析模式】当前为关键词分析模式，仅供参考")
-        
-        # 综合评分说明
-        reasons.append(
-            f"综合评分{weighted_score:.1f}分（LLM深度推理{llm_score:.1f}×50% + AI情绪{ai_score}×30% + 技术指标{tech_score}×20%）"
-        )
-        
-        # 添加详细分析
+            analysis_reasons.append("【说明】未配置 LLM 时新闻为关键词摘要")
+
+        reasons.append(f"加权综合约{weighted_score:.0f}分（模型内部口径，非投资建议）")
         reasons.extend(analysis_reasons)
-        
-        # 最终建议（根据个股情况生成不同的建议）
         final_advice = self._generate_final_advice(
             stars, weighted_score, technical_detail, fundamental_detail, news_detail, policy_detail
         )
         reasons.append(final_advice)
-
         return "；".join(reasons)
-    
-    def _cross_validate_dimensions(self, technical_detail: str, fundamental_detail: str, 
-                                 news_detail: str, policy_detail: str) -> str:
-        """维度交叉验证"""
-        # 技术面与基本面矛盾
-        if ('金叉' in technical_detail or '多头' in technical_detail) and \
-           ('ROE较差' in fundamental_detail or '营收负增长' in fundamental_detail):
-            return "技术面与基本面存在背离，需谨慎对待技术信号"
-        
-        # 技术面与消息面共振
-        if ('金叉' in technical_detail or '多头' in technical_detail) and \
-           ('利好' in news_detail or '积极' in news_detail):
-            return "技术面与消息面共振，上涨动能较强"
-        
-        # 基本面与政策面共振
-        if ('ROE优秀' in fundamental_detail or '营收增长' in fundamental_detail) and \
-           ('政策支持' in policy_detail):
-            return "基本面与政策面共振，长期发展向好"
-        
-        # 消息面与政策面矛盾
-        if ('利好' in news_detail or '积极' in news_detail) and \
-           ('政策限制' in policy_detail or '监管' in policy_detail):
-            return "消息面与政策面存在矛盾，需关注政策风险"
-        
-        return ""
     
     def _generate_final_advice(self, stars: int, weighted_score: float, 
                              technical_detail: str, fundamental_detail: str, 

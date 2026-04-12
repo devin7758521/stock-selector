@@ -17,6 +17,26 @@ from .plugin import PluginManager
 
 logger = logging.getLogger("stock_selector.selector")
 
+# 全市场 LLM 五星最多保留数量（与 AI 插件五星上限一致）
+_MAX_LLM_FIVE_STAR = 2
+
+
+def _apply_llm_five_star_cap(results: List[Dict], max_five: int = _MAX_LLM_FIVE_STAR) -> None:
+    """按当前列表顺序保留前 max_five 只五星，其余降为四星并改写理由前缀。"""
+    if not results:
+        return
+    kept = 0
+    for r in results:
+        if r.get("llm_stars") == 5:
+            kept += 1
+            if kept > max_five:
+                r["llm_stars"] = 4
+                prev = (r.get("llm_star_reason") or "").strip()
+                r["llm_star_reason"] = (
+                    f"【五星限{max_five}只】按当日排序仅前{max_five}只保留五星，本票降为四星。"
+                    f"原评判：{prev}"
+                )
+
 
 class StockSelector:
     """
@@ -201,11 +221,18 @@ class StockSelector:
         # Step 5: 按照 LLM 评星和加权分排序
         logger.info("Step 5: 按照 LLM 评星和加权分排序...")
         sorted_results = sorted(
-            results, 
-            key=lambda x: (x.get('llm_stars', 0), x.get('weighted_score', 0)), 
-            reverse=True
+            results,
+            key=lambda x: (x.get("llm_stars", 0), x.get("llm_weighted_score", x.get("weighted_score", 0))),
+            reverse=True,
         )
-        
+
+        _apply_llm_five_star_cap(sorted_results, _MAX_LLM_FIVE_STAR)
+        sorted_results = sorted(
+            sorted_results,
+            key=lambda x: (x.get("llm_stars", 0), x.get("llm_weighted_score", x.get("weighted_score", 0))),
+            reverse=True,
+        )
+
         # Step 6: 企业微信推送
         logger.info("Step 6: 推送企业微信...")
         send_wecom(sorted_results, self.config)

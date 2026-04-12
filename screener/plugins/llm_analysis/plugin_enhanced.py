@@ -270,11 +270,19 @@ class LLMAnalysisPlugin(Plugin):
         star_display = '★' * stars + '☆' * (5 - stars)
         weighted_score = stock_data.get('llm_weighted_score', 50.0)
         lines.append(f"\n【综合评级】{star_display} ({stars}星) - 加权总分: {weighted_score:.1f}")
-        
-        # 推荐理由（综合推理后的结论）
-        recommendation_reason = stock_data.get('llm_recommendation_reason', '')
-        if recommendation_reason:
-            lines.append(f"\n【推荐理由】\n{recommendation_reason}")
+
+        sr = stock_data.get("llm_star_reason", "")
+        if sr:
+            lines.append(f"\n【打星理由】\n{sr}")
+
+        for k, lab in (
+            ("llm_technical_detail", "技术面摘要"),
+            ("llm_fundamental_detail", "基本面摘要"),
+            ("llm_news_detail", "消息面摘要"),
+        ):
+            v = stock_data.get(k)
+            if v:
+                lines.append(f"\n【{lab}】\n{v}")
         
         # 操作建议
         operation_advice = stock_data.get('llm_operation_advice', 'N/A')

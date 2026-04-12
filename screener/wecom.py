@@ -138,33 +138,37 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
             if 'llm_operation_advice' in r:
                 content_lines.append(f"建议: {r['llm_operation_advice']}")
 
+            def _one_line(key: str, label: str, limit: int = 160) -> None:
+                v = r.get(key)
+                if not v or not str(v).strip():
+                    return
+                s = str(v).replace("\n", " ").strip()
+                if len(s) > limit:
+                    s = s[: limit - 1] + "…"
+                content_lines.append(f"{label}: {s}")
+
+            _one_line("llm_technical_detail", "技术", 180)
+            _one_line("llm_fundamental_detail", "基本面", 180)
+            _one_line("llm_news_detail", "消息面", 160)
+
             if 'llm_news_success' in r:
                 if r['llm_news_success']:
-                    content_lines.append("📰 新闻: 已获取")
-                    if 'llm_news_summary' in r and r['llm_news_summary']:
-                        summary = r['llm_news_summary'][:100]
-                        if len(r['llm_news_summary']) > 100:
-                            summary += "..."
-                        content_lines.append(f"   {summary}")
+                    content_lines.append("📰 新闻源: 已抓取")
+                    if r.get('llm_news_summary'):
+                        ns = str(r['llm_news_summary']).replace("\n", " ").strip()
+                        lim = 220 if r.get('llm_stars') == 5 else 140
+                        if len(ns) > lim:
+                            ns = ns[: lim - 1] + "…"
+                        content_lines.append(f"   摘要: {ns}")
                 else:
-                    content_lines.append("📰 新闻: 未获取到")
+                    content_lines.append("📰 新闻源: 未获取")
 
-            if 'llm_star_reason' in r:
-                reason = r['llm_star_reason']
-                if '；' in reason:
-                    parts = reason.split('；')
-                    clean_parts = []
-                    for p in parts:
-                        if '加权总分' in p or '×50%' in p or '×30%' in p or '×20%' in p:
-                            continue
-                        if p.strip():
-                            clean_parts.append(p.strip())
-                    if clean_parts:
-                        reason = '；'.join(clean_parts)
-                    else:
-                        reason = ''
-                if reason:
-                    content_lines.append(f"理由: {reason}")
+            if r.get('llm_star_reason'):
+                reason = str(r['llm_star_reason']).strip()
+                lim = 900 if r.get('llm_stars') == 5 else 480
+                if len(reason) > lim:
+                    reason = reason[: lim - 1] + "…"
+                content_lines.append(f"打星理由: {reason}")
 
             content_lines.append("")
         
