@@ -19,6 +19,13 @@ def load_config(path: str = "config.yaml") -> dict:
     cfg.setdefault("screener", {})
     cfg.setdefault("request", {})
     cfg.setdefault("wecom", {})
+    cfg.setdefault("plugins", {
+        "llm_analysis": {"enabled": True},
+        "ai_analysis": {"enabled": True},
+        "stock_list_analysis": {"enabled": True},
+        "technical_analysis": {"enabled": True},
+        "fundamental_analysis": {"enabled": True},
+    })
 
     # 环境变量覆盖（适配 GitHub Actions Secrets）
     env_map = {
