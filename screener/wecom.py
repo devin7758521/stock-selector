@@ -23,13 +23,9 @@ def _get_feature_status(cfg: dict) -> str:
     if llm_api_key:
         lines.append("✅ LLM分析: 已配置")
     else:
-        lines.append("❌ LLM分析: 未配置（请配置 DEEPSEEK_API_KEY）")
+        lines.append("⚠️ LLM分析: 未配置（基础分析模式）")
     
-    news_api_key = os.environ.get("NEWS_API_KEY", "") or cfg.get("plugins", {}).get("llm_analysis", {}).get("news_api_key", "")
-    if news_api_key:
-        lines.append("✅ 新闻搜索: 已配置")
-    else:
-        lines.append("❌ 新闻搜索: 未配置（请配置 NEWS_API_KEY）")
+    lines.append("📰 新闻搜索: 东方财富/新浪财经/同花顺/雪球（免费源）")
     
     return "\n".join(lines)
 
@@ -100,11 +96,11 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
         return False
 
     today = datetime.today().strftime("%Y-%m-%d")
+    feature_status = _get_feature_status(cfg)
 
     if not results:
-        content = f"📊 选股播报 {today}\n\n今日无符合条件的标的。"
+        content = f"📊 选股播报 {today}\n\n今日无符合条件的标的。\n\n{feature_status}"
     else:
-        feature_status = _get_feature_status(cfg)
         top_results = results[:10]
         content_lines = [f"📊 选股播报 {today}", f"共 {len(results)} 只\n", feature_status, ""]
         
@@ -126,6 +122,12 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
 
             if 'llm_operation_advice' in r:
                 content_lines.append(f"建议: {r['llm_operation_advice']}")
+
+            if 'llm_news_success' in r:
+                if r['llm_news_success']:
+                    content_lines.append("📰 新闻: 已获取")
+                else:
+                    content_lines.append("📰 新闻: 未获取到")
 
             if 'llm_star_reason' in r:
                 reason = r['llm_star_reason']

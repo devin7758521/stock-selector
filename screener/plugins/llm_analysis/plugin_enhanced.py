@@ -117,6 +117,8 @@ class LLMAnalsysisPlugin(Plugin):
                 fundamental_analysis=fundamental_analysis
             )
             
+            news_success = bool(news_context)
+            
             # 构建结果
             return {
                 "llm_sentiment_score": result.sentiment_score,
@@ -132,6 +134,7 @@ class LLMAnalsysisPlugin(Plugin):
                 "llm_error_message": result.error_message,
                 "llm_stars": result.stars,
                 "llm_star_reason": result.star_reason,
+                "llm_news_success": news_success,
                 
                 # 新增：详细分析维度
                 "llm_technical_detail": result.technical_analysis_detail,
