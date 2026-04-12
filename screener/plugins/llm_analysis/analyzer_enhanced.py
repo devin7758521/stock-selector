@@ -471,32 +471,35 @@ class EnhancedLLMAnalyzer:
         reasons.append(star_desc.get(stars, "评级未知"))
 
         reasons.append(
-            f"加权总分{weighted_score:.1f}分（LLM:{llm_score:.1f}×50% + AI:{ai_score}×30% + 技术:{tech_score}×20%）"
+            f"综合评分{weighted_score:.1f}分（LLM深度推理{llm_score:.1f}×50% + AI情绪{ai_score}×30% + 技术指标{tech_score}×20%）"
         )
 
+        if technical_detail and technical_detail != "N/A":
+            reasons.append(f"【技术面】{technical_detail}")
+
+        if fundamental_detail and fundamental_detail != "N/A":
+            reasons.append(f"【基本面】{fundamental_detail}")
+
+        if news_detail and news_detail != "N/A":
+            reasons.append(f"【消息面】{news_detail}")
+
+        if policy_detail and policy_detail != "N/A":
+            reasons.append(f"【政策面】{policy_detail}")
+
+        if market_detail and market_detail != "N/A":
+            reasons.append(f"【市场环境】{market_detail}")
+
         if llm_news_reason:
-            reasons.append(f"LLM深度推理：{llm_news_reason[:150]}")
-        else:
-            if '看涨' in technical_detail or '金叉' in technical_detail:
-                reasons.append("技术面向好")
+            reasons.append(f"【LLM深度推理】{llm_news_reason}")
 
-            if '优秀' in fundamental_detail or '良好' in fundamental_detail:
-                reasons.append("基本面扎实")
+        if macro_info and macro_info not in ('', 'N/A'):
+            reasons.append(f"【国内外经济形势】{macro_info}")
 
-            if '积极' in news_detail or '利好' in news_detail:
-                reasons.append("消息面积极")
+        if policy_info and policy_info not in ('', 'N/A'):
+            reasons.append(f"【行业政策动态】{policy_info}")
 
-            if '政策支持' in policy_detail:
-                reasons.append("政策面支持")
-
-        if news_headlines:
-            reasons.append(f"关键事件：{news_headlines[:80]}")
-
-        if policy_info:
-            reasons.append(f"政策动向：{policy_info[:60]}")
-
-        if macro_info:
-            reasons.append(f"宏观信息：{macro_info[:60]}")
+        if news_headlines and news_headlines not in ('', 'N/A'):
+            reasons.append(f"【重大事件】{news_headlines}")
 
         return "；".join(reasons)
 
