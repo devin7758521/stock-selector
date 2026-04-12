@@ -368,6 +368,11 @@ class EastMoneySearchProvider(BaseSearchProvider):
                     if not link.startswith('http'):
                         link = f"http://so.eastmoney.com{link}"
                     
+                    # 过滤广告内容
+                    ad_keywords = ['东方财富免费版', '东方财富Level-2', '东方财富策略', '广告', '免费']
+                    if any(keyword in title for keyword in ad_keywords):
+                        continue
+                    
                     published_at = time_elem.text.strip() if time_elem else ""
                     summary = ""
                     
