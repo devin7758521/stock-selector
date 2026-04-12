@@ -210,4 +210,4 @@ class StockSelector:
         logger.info("Step 6: 推送企业微信...")
         send_wecom(sorted_results, self.config)
         
-        return results
+        return sorted_results
