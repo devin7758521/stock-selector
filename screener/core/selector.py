@@ -77,8 +77,11 @@ class StockSelector:
                 plugin_result = plugin.process(result, df, self.config)
                 if plugin_result:
                     result.update(plugin_result)
+                    logger.info(f"插件 {plugin.name} 处理 {code} 成功，返回字段: {list(plugin_result.keys())}")
+                else:
+                    logger.warning(f"插件 {plugin.name} 处理 {code} 返回空")
             except Exception as e:
-                logger.debug(f"插件 {plugin.name} 处理 {code} 失败: {e}")
+                logger.warning(f"插件 {plugin.name} 处理 {code} 失败: {e}")
         
         return result
     
