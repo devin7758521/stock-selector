@@ -74,15 +74,11 @@ class LLMNewsAnalyzer:
 
         Args:
             api_key: API 密钥
-            model: 模型类型 (deepseek / gemini)
+            model: 模型名称，如 deepseek-chat、gemini-1.5-flash、gemini-2.0-flash 等
         """
         self.api_key = api_key
         self.model = model
-
-        if model == "gemini":
-            self.model_name = "gemini-1.5-flash"
-        else:
-            self.model_name = "deepseek-chat"
+        self.model_name = model
 
     def analyze(self, news_context: str, stock_name: str,
                 code: str, industry: Optional[str] = None) -> LLMAnalysisResult:
@@ -112,7 +108,7 @@ class LLMNewsAnalyzer:
             )
 
         try:
-            if self.model == "gemini":
+            if "gemini" in self.model.lower():
                 return self._analyze_with_gemini(news_context, stock_name, code, industry)
             else:
                 return self._analyze_with_deepseek(news_context, stock_name, code, industry)
