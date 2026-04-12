@@ -19,6 +19,8 @@ class TechnicalAnalysisPlugin(Plugin):
     def process(self, result: Dict, df: pd.DataFrame, config: Dict) -> Optional[Dict]:
         """计算技术指标"""
         try:
+            code = result['code']
+            self.logger.info(f"[技术分析] 开始计算 {code} 技术指标")
             # 计算 MACD
             exp1 = df['close'].ewm(span=12, adjust=False).mean()
             exp2 = df['close'].ewm(span=26, adjust=False).mean()

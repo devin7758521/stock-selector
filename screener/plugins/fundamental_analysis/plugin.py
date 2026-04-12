@@ -21,8 +21,10 @@ class FundamentalAnalysisPlugin(Plugin):
         """获取基本面数据"""
         try:
             code = result['code']
+            self.logger.info(f"[基本面分析] 开始获取 {code} 数据")
             financial_data = fetch_financial_data(code)
-            
+            self.logger.info(f"[基本面分析] {code} 原始数据: {financial_data}")
+
             if financial_data:
                 roe = financial_data.get('roe', 0)
                 pe = financial_data.get('pe', 0)
