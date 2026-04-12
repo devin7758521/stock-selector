@@ -126,6 +126,11 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
             if 'llm_news_success' in r:
                 if r['llm_news_success']:
                     content_lines.append("📰 新闻: 已获取")
+                    if 'llm_news_summary' in r and r['llm_news_summary']:
+                        summary = r['llm_news_summary'][:100]
+                        if len(r['llm_news_summary']) > 100:
+                            summary += "..."
+                        content_lines.append(f"   {summary}")
                 else:
                     content_lines.append("📰 新闻: 未获取到")
 
