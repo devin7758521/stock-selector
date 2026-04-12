@@ -155,13 +155,13 @@ class PluginManager:
                     self.plugins[plugin_name] = plugin
                     return True
             elif plugin_name == "technical_analysis":
-                from screener.plugins.technical_analysis import TechnicalAnalysisPlugin
+                from screener.plugins.technical_analysis.plugin import TechnicalAnalysisPlugin
                 plugin = TechnicalAnalysisPlugin(plugin_name, config)
                 if plugin.initialize():
                     self.plugins[plugin_name] = plugin
                     return True
             elif plugin_name == "fundamental_analysis":
-                from screener.plugins.fundamental_analysis import FundamentalAnalysisPlugin
+                from screener.plugins.fundamental_analysis.plugin import FundamentalAnalysisPlugin
                 plugin = FundamentalAnalysisPlugin(plugin_name, config)
                 if plugin.initialize():
                     self.plugins[plugin_name] = plugin
