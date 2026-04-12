@@ -60,8 +60,13 @@ class LLMAnalsysisPlugin(Plugin):
         try:
             # 获取LLM配置（环境变量优先）
             llm_config = self.config.get('llm', {})
-            api_key = llm_config.get('api_key') or os.environ.get('DEEPSEEK_API_KEY', '')
             model = llm_config.get('model') or os.environ.get('LLM_MODEL', 'deepseek')
+
+            # 根据模型选择对应的API Key
+            if model == "gemini":
+                api_key = llm_config.get('api_key') or os.environ.get('GEMINI_API_KEY', '')
+            else:
+                api_key = llm_config.get('api_key') or os.environ.get('DEEPSEEK_API_KEY', '')
 
             # 获取Tavily API Key（可选，用于更精准的AI搜索）
             tavily_keys = []
