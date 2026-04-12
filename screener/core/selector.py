@@ -41,8 +41,8 @@ class StockSelector:
         初始化插件
         """
         # 从配置中加载插件
-        plugin_config = self.config.get("plugins", {})
-        for plugin_name, plugin_config in plugin_config.items():
+        plugins_cfg = self.config.get("plugins", {})
+        for plugin_name, plugin_config in plugins_cfg.items():
             if plugin_config.get("enabled", False):
                 try:
                     self.plugin_manager.load_plugin(plugin_name, plugin_config)
