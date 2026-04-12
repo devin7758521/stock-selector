@@ -89,20 +89,12 @@ class EnhancedLLMAnalyzer:
         self.deepseek_analyzer = None
 
         if api_key and model != "local":
-            if model == "deepseek":
-                try:
-                    from .deepseek_analyzer import DeepSeekNewsAnalyzer
-                    self.deepseek_analyzer = DeepSeekNewsAnalyzer(api_key)
-                    logger.info(f"已初始化DeepSeek新闻分析器")
-                except ImportError as e:
-                    logger.warning(f"无法导入DeepSeek分析器: {e}")
-            else:
-                try:
-                    import litellm
-                    self.llm_client = litellm
-                    logger.info(f"已初始化LLM客户端: {model}")
-                except ImportError:
-                    logger.warning("litellm未安装，将使用本地分析器")
+            try:
+                from .deepseek_analyzer import LLMNewsAnalyzer
+                self.deepseek_analyzer = LLMNewsAnalyzer(api_key, model)
+                logger.info(f"已初始化{LLMNewsAnalyzer.__name__}新闻分析器 (模型: {model})")
+            except ImportError as e:
+                logger.warning(f"无法导入LLM分析器: {e}")
 
     def analyze(self, context: Dict[str, Any], news_context: Optional[str],
                 ai_analysis: Optional[Dict] = None,

@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-DeepSeek LLM 新闻分析服务
+LLM 新闻分析服务
 
-使用 DeepSeek API 进行真正的新闻理解和推理分析。
+支持 DeepSeek 和 Gemini 两大LLM进行新闻分析和推理。
 
 Copyright (c) 2026 stock selector. All rights reserved.
 """
 
 import logging
 import json
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
-logger = logging.getLogger("stock_selector.llm.deepseek")
+logger = logging.getLogger("stock_selector.llm.analyzer")
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 @dataclass
@@ -31,18 +32,7 @@ class LLMAnalysisResult:
     error_message: Optional[str] = None
 
 
-class DeepSeekNewsAnalyzer:
-    """
-    DeepSeek 新闻分析器
-
-    功能：
-    1. 理解新闻上下文内容
-    2. 分析新闻对特定股票的影响
-    3. 识别政策走向和市场情绪
-    4. 生成投资建议和理由
-    """
-
-    SYSTEM_PROMPT = """你是一位专业的A股投资分析师，擅长从新闻中提取有价值的信息并进行投资分析。
+SYSTEM_PROMPT = """你是一位专业的A股投资分析师，擅长从新闻中提取有价值的信息并进行投资分析。
 
 分析维度：
 1. 新闻情绪判断（利好/利空/中性）及理由
@@ -70,15 +60,29 @@ class DeepSeekNewsAnalyzer:
 
 请用JSON格式输出。"""
 
-    def __init__(self, api_key: str):
+
+class LLMNewsAnalyzer:
+    """
+    LLM 新闻分析器
+
+    支持 DeepSeek 和 Gemini 两大LLM进行新闻分析。
+    """
+
+    def __init__(self, api_key: str, model: str = "deepseek"):
         """
-        初始化 DeepSeek 新闻分析器
+        初始化 LLM 新闻分析器
 
         Args:
-            api_key: DeepSeek API 密钥
+            api_key: API 密钥
+            model: 模型类型 (deepseek / gemini)
         """
         self.api_key = api_key
-        self.model = "deepseek-chat"
+        self.model = model
+
+        if model == "gemini":
+            self.model_name = "gemini-1.5-flash"
+        else:
+            self.model_name = "deepseek-chat"
 
     def analyze(self, news_context: str, stock_name: str,
                 code: str, industry: Optional[str] = None) -> LLMAnalysisResult:
@@ -108,61 +112,12 @@ class DeepSeekNewsAnalyzer:
             )
 
         try:
-            import requests
-
-            industry_context = f"，所属行业：{industry}" if industry else ""
-
-            user_prompt = f"""分析以下关于 {stock_name}（{code}）{industry_context} 的新闻：
-
-{news_context}
-
-请进行深度分析并输出JSON格式结果。"""
-
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            }
-
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1000
-            }
-
-            response = requests.post(
-                DEEPSEEK_API_URL,
-                headers=headers,
-                json=payload,
-                timeout=30
-            )
-
-            if response.status_code != 200:
-                logger.error(f"DeepSeek API 请求失败: {response.status_code} - {response.text}")
-                return LLMAnalysisResult(
-                    sentiment_score=50,
-                    sentiment_reason="API请求失败",
-                    key_events=[],
-                    policy_impact="无法分析",
-                    macro_impact="无法分析",
-                    investment_suggestion="观望",
-                    confidence="低",
-                    success=False,
-                    error_message=f"API错误: {response.status_code}"
-                )
-
-            result = response.json()
-            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-            logger.info(f"DeepSeek 分析成功: {stock_name} ({code})")
-
-            return self._parse_response(content)
-
+            if self.model == "gemini":
+                return self._analyze_with_gemini(news_context, stock_name, code, industry)
+            else:
+                return self._analyze_with_deepseek(news_context, stock_name, code, industry)
         except Exception as e:
-            logger.error(f"DeepSeek 分析异常: {e}", exc_info=True)
+            logger.error(f"LLM 分析异常: {e}", exc_info=True)
             return LLMAnalysisResult(
                 sentiment_score=50,
                 sentiment_reason=f"分析异常: {str(e)}",
@@ -174,6 +129,116 @@ class DeepSeekNewsAnalyzer:
                 success=False,
                 error_message=str(e)
             )
+
+    def _analyze_with_deepseek(self, news_context: str, stock_name: str,
+                               code: str, industry: Optional[str]) -> LLMAnalysisResult:
+        """使用 DeepSeek 分析"""
+        import requests
+
+        industry_context = f"，所属行业：{industry}" if industry else ""
+
+        user_prompt = f"""分析以下关于 {stock_name}（{code}）{industry_context} 的新闻：
+
+{news_context}
+
+请进行深度分析并输出JSON格式结果。"""
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1000
+        }
+
+        response = requests.post(
+            DEEPSEEK_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            logger.error(f"DeepSeek API 请求失败: {response.status_code} - {response.text}")
+            return LLMAnalysisResult(
+                sentiment_score=50,
+                sentiment_reason="API请求失败",
+                key_events=[],
+                policy_impact="无法分析",
+                macro_impact="无法分析",
+                investment_suggestion="观望",
+                confidence="低",
+                success=False,
+                error_message=f"API错误: {response.status_code}"
+            )
+
+        result = response.json()
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        logger.info(f"DeepSeek 分析成功: {stock_name} ({code})")
+
+        return self._parse_response(content)
+
+    def _analyze_with_gemini(self, news_context: str, stock_name: str,
+                             code: str, industry: Optional[str]) -> LLMAnalysisResult:
+        """使用 Gemini 分析"""
+        import requests
+
+        industry_context = f"，所属行业：{industry}" if industry else ""
+
+        user_prompt = f"""分析以下关于 {stock_name}（{code}）{industry_context} 的新闻：
+
+{news_context}
+
+请进行深度分析并输出JSON格式结果。"""
+
+        url = f"{GEMINI_API_URL}/{self.model_name}:generateContent?key={self.api_key}"
+
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": f"{SYSTEM_PROMPT}\n\n{user_prompt}"
+                }]
+            }],
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": 1000
+            }
+        }
+
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+
+        if response.status_code != 200:
+            logger.error(f"Gemini API 请求失败: {response.status_code} - {response.text}")
+            return LLMAnalysisResult(
+                sentiment_score=50,
+                sentiment_reason="API请求失败",
+                key_events=[],
+                policy_impact="无法分析",
+                macro_impact="无法分析",
+                investment_suggestion="观望",
+                confidence="低",
+                success=False,
+                error_message=f"API错误: {response.status_code}"
+            )
+
+        result = response.json()
+        content = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+
+        logger.info(f"Gemini 分析成功: {stock_name} ({code})")
+
+        return self._parse_response(content)
 
     def _parse_response(self, content: str) -> LLMAnalysisResult:
         """解析 LLM 返回的内容"""
@@ -242,44 +307,4 @@ class DeepSeekNewsAnalyzer:
         )
 
 
-def test_deepseek_connection(api_key: str) -> bool:
-    """
-    测试 DeepSeek API 连接
-
-    Args:
-        api_key: API 密钥
-
-    Returns:
-        是否连接成功
-    """
-    try:
-        import requests
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
-
-        payload = {
-            "model": "deepseek-chat",
-            "messages": [{"role": "user", "content": "你好"}],
-            "max_tokens": 10
-        }
-
-        response = requests.post(
-            DEEPSEEK_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-
-        if response.status_code == 200:
-            logger.info("DeepSeek API 连接测试成功")
-            return True
-        else:
-            logger.error(f"DeepSeek API 连接测试失败: {response.status_code}")
-            return False
-
-    except Exception as e:
-        logger.error(f"DeepSeek API 连接测试异常: {e}")
-        return False
+DeepSeekNewsAnalyzer = LLMNewsAnalyzer

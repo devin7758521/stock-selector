@@ -997,15 +997,67 @@ class BochaSearchProvider(BaseSearchProvider):
 
 
 class TavilySearchProvider(BaseSearchProvider):
-    """Tavily搜索引擎（占位）"""
+    """Tavily搜索引擎（AI优化的搜索API）"""
+
+    def __init__(self, api_keys: List[str]):
+        super().__init__(api_keys, "Tavily")
+
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
-        return SearchResponse(
-            query=query,
-            results=[],
-            provider=self.name,
-            success=False,
-            error_message="Tavily 搜索未配置"
-        )
+        try:
+            import requests
+
+            url = "https://api.tavily.com/search"
+            payload = {
+                "query": query,
+                "search_depth": "basic",
+                "max_results": max_results,
+                "include_answer": False,
+                "include_raw_content": False,
+                "include_images": False
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "api_key": api_key
+            }
+
+            response = requests.post(url, json=payload, headers=headers, timeout=15)
+
+            if response.status_code != 200:
+                return SearchResponse(
+                    query=query,
+                    results=[],
+                    provider=self.name,
+                    success=False,
+                    error_message=f"Tavily API错误: {response.status_code}"
+                )
+
+            data = response.json()
+            results = []
+
+            for item in data.get("results", [])[:max_results]:
+                results.append(SearchResult(
+                    title=item.get("title", ""),
+                    snippet=item.get("content", "")[:200],
+                    url=item.get("url", ""),
+                    source="Tavily",
+                    published_date=None
+                ))
+
+            return SearchResponse(
+                query=query,
+                results=results,
+                provider=self.name,
+                success=True
+            )
+
+        except Exception as e:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self.name,
+                success=False,
+                error_message=str(e)
+            )
 
 
 class BraveSearchProvider(BaseSearchProvider):

@@ -63,11 +63,17 @@ class LLMAnalsysisPlugin(Plugin):
             api_key = llm_config.get('api_key') or os.environ.get('DEEPSEEK_API_KEY', '')
             model = llm_config.get('model') or os.environ.get('LLM_MODEL', 'deepseek')
 
+            # 获取Tavily API Key（可选，用于更精准的AI搜索）
+            tavily_keys = []
+            tavily_key = os.environ.get('TAVILY_API_KEY', '')
+            if tavily_key:
+                tavily_keys = [k.strip() for k in tavily_key.split(',') if k.strip()]
+            
             # 初始化增强版LLM分析器
             self.analyzer = EnhancedLLMAnalyzer(api_key=api_key, model=model)
 
             # 初始化搜索服务
-            self.search_service = SearchService()
+            self.search_service = SearchService(tavily_keys=tavily_keys if tavily_keys else None)
 
             logger.info(f"LLM 分析插件初始化成功（模型: {model}）")
             return True
