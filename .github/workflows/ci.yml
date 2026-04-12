@@ -1,0 +1,36 @@
+# 语法与依赖自检：无需 Secrets，适合 PR / 每次推送
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python
+        run: python -m compileall -q screener main.py run_ui.py
+
+      - name: Import smoke test
+        run: |
+          python -c "from screener.core import StockSelector; from screener.utils import load_config"
+          python -c "from screener.plugins.llm_analysis.plugin_enhanced import LLMAnalysisPlugin"
+
+      - name: Validate workflow YAML
+        run: python -c "import yaml, pathlib; [yaml.safe_load(p.read_text()) for p in pathlib.Path('.github/workflows').glob('*.yml')]"

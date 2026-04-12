@@ -15,15 +15,30 @@ import requests
 logger = logging.getLogger("stock_selector.wecom")
 
 
+def _llm_configured(cfg: dict) -> bool:
+    """是否配置了任一 LLM Key（环境变量或 config 扁平/嵌套）。"""
+    if os.environ.get("DEEPSEEK_API_KEY", "").strip() or os.environ.get(
+        "GEMINI_API_KEY", ""
+    ).strip():
+        return True
+    la = cfg.get("plugins", {}).get("llm_analysis") or {}
+    if isinstance(la, dict):
+        if str(la.get("api_key", "")).strip():
+            return True
+        nested = la.get("llm") or {}
+        if isinstance(nested, dict) and str(nested.get("api_key", "")).strip():
+            return True
+    return False
+
+
 def _get_feature_status(cfg: dict) -> str:
     """获取功能模块状态"""
     lines = ["【功能状态】"]
     
-    llm_api_key = os.environ.get("DEEPSEEK_API_KEY", "") or cfg.get("plugins", {}).get("llm_analysis", {}).get("llm", {}).get("api_key", "")
-    if llm_api_key:
+    if _llm_configured(cfg):
         lines.append("✅ LLM分析: 已配置")
     else:
-        lines.append("⚠️ LLM分析: 未配置（基础分析模式）")
+        lines.append("⚠️ LLM分析: 未配置（基础分析模式，需 DEEPSEEK_API_KEY 或 GEMINI_API_KEY）")
     
     lines.append("📰 新闻搜索: 东方财富/新浪财经/同花顺/雪球（免费源）")
     

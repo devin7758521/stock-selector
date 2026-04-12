@@ -58,15 +58,27 @@ class LLMAnalysisPlugin(Plugin):
             是否初始化成功
         """
         try:
-            # 获取LLM配置（环境变量优先）
-            llm_config = self.config.get('llm', {})
-            model = llm_config.get('model') or os.environ.get('LLM_MODEL', 'deepseek')
-
-            # 根据模型选择对应的API Key
-            if "gemini" in model.lower():
-                api_key = llm_config.get('api_key') or os.environ.get('GEMINI_API_KEY', '')
+            # 支持两种写法：llm_analysis 下扁平 api_key/model，或嵌套 llm: { api_key, model }
+            nested = self.config.get("llm") or {}
+            if not isinstance(nested, dict):
+                nested = {}
+            model = (
+                nested.get("model")
+                or self.config.get("model")
+                or os.environ.get("LLM_MODEL", "deepseek")
+            )
+            if "gemini" in str(model).lower():
+                api_key = (
+                    nested.get("api_key")
+                    or self.config.get("api_key")
+                    or os.environ.get("GEMINI_API_KEY", "")
+                )
             else:
-                api_key = llm_config.get('api_key') or os.environ.get('DEEPSEEK_API_KEY', '')
+                api_key = (
+                    nested.get("api_key")
+                    or self.config.get("api_key")
+                    or os.environ.get("DEEPSEEK_API_KEY", "")
+                )
 
             # 获取Tavily API Key（可选，用于更精准的AI搜索）
             tavily_keys = []

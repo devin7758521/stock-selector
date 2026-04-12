@@ -60,6 +60,14 @@ SYSTEM_PROMPT = """你是一位专业的A股投资分析师，擅长从新闻中
 
 请用JSON格式输出。"""
 
+SYNTHESIS_SYSTEM_PROMPT = """你是A股研究助理。根据用户给出的多维度要点（技术面、基本面、消息面、政策面、市场环境及可选的AI插件结论），用中文写一段可直接给投资者看的综合推理。
+
+硬性要求：
+- 总字数约 80～220 字，分段可有可无，语气专业克制。
+- 不要编造材料中未出现的具体数字、新闻或政策名称。
+- 若某维度明显信息不足，要明确写出「信息不足」，不要臆测。
+- 结尾用一句话呼应用户给出的「操作建议标签」（如持有/观望/买入等），但不要与前面推理矛盾。"""
+
 
 class LLMNewsAnalyzer:
     """
@@ -125,6 +133,96 @@ class LLMNewsAnalyzer:
                 success=False,
                 error_message=str(e)
             )
+
+    def synthesize(self, user_prompt: str, max_tokens: int = 700) -> Optional[str]:
+        """
+        通用文本综合（多维度推理、摘要等），返回模型原文；失败返回 None。
+        """
+        if not self.api_key or not str(self.api_key).strip():
+            return None
+        if not user_prompt or not user_prompt.strip():
+            return None
+        try:
+            if "gemini" in self.model.lower():
+                return self._synthesize_gemini(user_prompt, max_tokens)
+            return self._synthesize_deepseek(user_prompt, max_tokens)
+        except Exception as e:
+            logger.warning(f"LLM 综合推理异常: {e}", exc_info=True)
+            return None
+
+    def _synthesize_deepseek(self, user_prompt: str, max_tokens: int) -> Optional[str]:
+        import requests
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        model = self.model_name
+        if model in ("deepseek", "local", ""):
+            model = "deepseek-chat"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYNTHESIS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.35,
+            "max_tokens": max_tokens,
+        }
+        response = requests.post(
+            DEEPSEEK_API_URL, headers=headers, json=payload, timeout=45
+        )
+        if response.status_code != 200:
+            logger.error(
+                f"DeepSeek 综合推理 API 失败: {response.status_code} - {response.text[:500]}"
+            )
+            return None
+        content = (
+            response.json()
+            .get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        text = (content or "").strip()
+        return text if text else None
+
+    def _synthesize_gemini(self, user_prompt: str, max_tokens: int) -> Optional[str]:
+        import requests
+
+        url = f"{GEMINI_API_URL}/{self.model_name}:generateContent?key={self.api_key}"
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": f"{SYNTHESIS_SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"}
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.35,
+                "maxOutputTokens": max_tokens,
+            },
+        }
+        response = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=45,
+        )
+        if response.status_code != 200:
+            logger.error(
+                f"Gemini 综合推理 API 失败: {response.status_code} - {response.text[:500]}"
+            )
+            return None
+        content = (
+            response.json()
+            .get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+        text = (content or "").strip()
+        return text if text else None
 
     def _analyze_with_deepseek(self, news_context: str, stock_name: str,
                                code: str, industry: Optional[str]) -> LLMAnalysisResult:

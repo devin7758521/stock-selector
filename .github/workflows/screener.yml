@@ -24,6 +24,8 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 说明：未提交 config.yaml 时 load_config 会用内置默认；LLM 用 Gemini 时请设 Secrets：
+      #   GEMINI_API_KEY + LLM_MODEL=gemini-2.5-flash（或你在 AI Studio 中的模型 ID）
       - name: Run screener
         env:
           TUSHARE_TOKEN:     ${{ secrets.TUSHARE_TOKEN }}

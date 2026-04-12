@@ -190,8 +190,16 @@ class EnhancedLLMAnalyzer:
             )
 
             recommendation_reason = self._generate_recommendation_reason(
-                technical_detail, fundamental_detail, news_detail,
-                policy_detail, market_detail, weighted_score, operation_advice
+                stock_name,
+                code,
+                technical_detail,
+                fundamental_detail,
+                news_detail,
+                policy_detail,
+                market_detail,
+                weighted_score,
+                operation_advice,
+                ai_analysis,
             )
 
             risk_warning = self._generate_risk_warning(
@@ -360,43 +368,50 @@ class EnhancedLLMAnalyzer:
         else:
             return "弱势下跌"
 
-    def _generate_recommendation_reason(self, technical_detail: str,
-                                        fundamental_detail: str,
-                                        news_detail: str, policy_detail: str,
-                                        market_detail: str, weighted_score: float,
-                                        operation_advice: str) -> str:
-        """生成推荐理由"""
-        # 当有LLM分析器时，使用LLM进行综合推理
+    def _generate_recommendation_reason(
+        self,
+        stock_name: str,
+        code: str,
+        technical_detail: str,
+        fundamental_detail: str,
+        news_detail: str,
+        policy_detail: str,
+        market_detail: str,
+        weighted_score: float,
+        operation_advice: str,
+        ai_analysis: Optional[Dict],
+    ) -> str:
+        """生成推荐理由：优先调用真实 LLM 综合推理，失败则回退规则摘要。"""
+        ai_hint = ""
+        if ai_analysis:
+            ai_hint = (
+                f"【AI插件】信号={ai_analysis.get('ai_buy_signal', 'N/A')}，"
+                f"评分={ai_analysis.get('ai_signal_score', 'N/A')}，"
+                f"趋势={ai_analysis.get('ai_trend_status', 'N/A')}。\n"
+            )
+
         if self.deepseek_analyzer:
-            stock_name = "未知股票"
-            code = "未知代码"
-            
-            prompt = f"""股票：{stock_name}（{code}）
-技术面分析：{technical_detail}（评分：{self._extract_technical_score(technical_detail)}）
-基本面分析：{fundamental_detail}（评分：{self._extract_fundamental_score(fundamental_detail)}）
-消息面分析：{news_detail}（评分：{self._extract_news_score(news_detail)}）
-政策面分析：{policy_detail}（评分：{self._extract_policy_score(policy_detail)}）
+            user_prompt = f"""标的：{stock_name}（{code}）
+{ai_hint}技术面：{technical_detail}
+（内部估计分：{self._extract_technical_score(technical_detail)}）
+基本面：{fundamental_detail}
+（内部估计分：{self._extract_fundamental_score(fundamental_detail)}）
+消息面：{news_detail}
+（内部估计分：{self._extract_news_score(news_detail)}）
+政策面：{policy_detail}
+（内部估计分：{self._extract_policy_score(policy_detail)}）
+市场环境：{market_detail}
 
-请基于以上5个维度：
-1. 指出各维度之间是否存在矛盾或共振
-2. 说明哪个维度是当前最关键的驱动因素
-3. 给出一段50-100字的综合投资推理
-4. 最后给出操作建议
-"""
-            
-            try:
-                # 这里应该调用LLM API进行分析
-                # 由于实际调用需要API Key，这里暂时使用模拟结果
-                logger.info("使用LLM进行综合推理")
-                return "LLM综合分析：技术面与基本面共振，消息面利好，政策面支持，建议积极关注。"
-            except Exception as e:
-                logger.warning(f"LLM综合推理失败: {e}")
-                # 失败时回退到关键词分析模式
-                pass
-        
-        # 关键词分析模式
+系统加权参考：加权分={weighted_score:.1f}（0-100 尺度下为模型内部分数），当前操作建议标签：{operation_advice}
+
+请完成：各维度是否共振或矛盾、当前更应信哪一类信息、80～200 字综合推理，并与操作建议标签一致收尾。"""
+            logger.info(f"请求 LLM 综合推理: {stock_name} ({code})")
+            llm_text = self.deepseek_analyzer.synthesize(user_prompt, max_tokens=800)
+            if llm_text:
+                return f"{llm_text}\n（LLM 综合推理）"
+            logger.warning("LLM 综合推理无有效返回，回退规则摘要")
+
         reasons = []
-
         reasons.extend(self._extract_technical_reason(technical_detail))
         reasons.extend(self._extract_fundamental_reason(fundamental_detail))
         reasons.extend(self._extract_news_reason(news_detail))
@@ -404,9 +419,11 @@ class EnhancedLLMAnalyzer:
         reasons.extend(self._extract_market_reason(market_detail))
 
         summary = self._get_score_summary(weighted_score, operation_advice)
-        
-        # 添加模式说明
-        mode_info = "（当前为关键词分析模式，仅供参考）"
+        mode_info = (
+            "（规则摘要模式：未调用 LLM 或 LLM 不可用，仅供参考）"
+            if self.deepseek_analyzer
+            else "（规则摘要模式：未配置 LLM API，仅供参考）"
+        )
 
         all_reasons = "；".join(reasons)
         return f"{all_reasons}。{summary} {mode_info}"
