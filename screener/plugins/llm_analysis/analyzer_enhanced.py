@@ -71,7 +71,12 @@ class EnhancedLLMAnalyzer:
     - LLM综合评分：50%
     - AI分析评分：30%
     - 技术指标评分：20%
+
+    星级：0～5 星；加权综合分（内部 0～100）低于 WEIGHTED_SCORE_ZERO_STAR_BELOW 为「无星」。
     """
+
+    # 可调：低于该加权分则为 0 星（无星）
+    WEIGHTED_SCORE_ZERO_STAR_BELOW: float = 32.0
 
     def __init__(self, api_key: Optional[str] = None, model: str = "local"):
         """
@@ -502,17 +507,18 @@ class EnhancedLLMAnalyzer:
         return "；".join(reasons) if reasons else "综合评分较高，可考虑买入"
 
     def _calculate_stars(self, weighted_score: float) -> int:
-        """计算五星评级"""
+        """计算星级 0～5（0 为无星：加权综合过低）。"""
+        if weighted_score < self.WEIGHTED_SCORE_ZERO_STAR_BELOW:
+            return 0
         if weighted_score >= 85:
             return 5
-        elif weighted_score >= 75:
+        if weighted_score >= 75:
             return 4
-        elif weighted_score >= 60:
+        if weighted_score >= 60:
             return 3
-        elif weighted_score >= 45:
+        if weighted_score >= 45:
             return 2
-        else:
-            return 1
+        return 1
 
     @staticmethod
     def _clip(text: str, max_len: int = 180) -> str:
@@ -538,6 +544,7 @@ class EnhancedLLMAnalyzer:
             3: "三星评级，中性评价",
             2: "二星评级，谨慎参与",
             1: "一星评级，不建议参与",
+            0: "无星，综合极差档（加权分低于模型内部门槛），不建议关注",
         }
 
         if stars == 5:
@@ -616,6 +623,11 @@ class EnhancedLLMAnalyzer:
                              technical_detail: str, fundamental_detail: str, 
                              news_detail: str, policy_detail: str) -> str:
         """生成最终建议（根据个股情况）"""
+        if stars <= 0:
+            return (
+                "加权综合处于极低档，技术/基本面/情绪等至少一端明显偏弱，"
+                "不建议作为重点标的；若已持仓宜严控仓位。"
+            )
         if stars >= 4:
             if '金叉' in technical_detail and '利好' in news_detail:
                 return "技术面与消息面共振，短期上涨概率大，建议积极买入"

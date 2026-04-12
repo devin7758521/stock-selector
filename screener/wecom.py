@@ -133,7 +133,11 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
                 content_lines.append(f"AI信号: {r['ai_buy_signal']}")
             
             if 'llm_stars' in r:
-                content_lines.append(f"LLM评级: {r['llm_stars']}星")
+                ls = r["llm_stars"]
+                if ls is not None and ls <= 0:
+                    content_lines.append("LLM评级: 无星（综合分低于内部门槛）")
+                else:
+                    content_lines.append(f"LLM评级: {ls}星")
 
             if 'llm_operation_advice' in r:
                 content_lines.append(f"建议: {r['llm_operation_advice']}")

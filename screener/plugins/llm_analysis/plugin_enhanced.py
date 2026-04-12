@@ -228,7 +228,10 @@ class LLMAnalysisPlugin(Plugin):
         
         # 基本评级
         stars = stock_data.get('llm_stars', 3)
-        star_display = '★' * stars + '☆' * (5 - stars)
+        if stars is not None and stars <= 0:
+            star_display = "无星 " + ("☆" * 5)
+        else:
+            star_display = "★" * max(0, int(stars)) + "☆" * (5 - max(0, int(stars)))
         operation_advice = stock_data.get('llm_operation_advice', 'N/A')
         confidence = stock_data.get('llm_confidence_level', 'N/A')
         weighted_score = stock_data.get('llm_weighted_score', 50.0)
@@ -267,9 +270,15 @@ class LLMAnalysisPlugin(Plugin):
         
         # 综合评级
         stars = stock_data.get('llm_stars', 3)
-        star_display = '★' * stars + '☆' * (5 - stars)
+        if stars is not None and stars <= 0:
+            star_display = "无星 " + ("☆" * 5)
+            star_label = "无星"
+        else:
+            sn = max(0, int(stars))
+            star_display = "★" * sn + "☆" * (5 - sn)
+            star_label = f"{sn}星"
         weighted_score = stock_data.get('llm_weighted_score', 50.0)
-        lines.append(f"\n【综合评级】{star_display} ({stars}星) - 加权总分: {weighted_score:.1f}")
+        lines.append(f"\n【综合评级】{star_display} ({star_label}) - 加权总分: {weighted_score:.1f}")
 
         sr = stock_data.get("llm_star_reason", "")
         if sr:
