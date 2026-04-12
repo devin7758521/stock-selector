@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 from screener.core.plugin import Plugin
 from screener.datasources import fetch_daily_kline, fetch_stock_list
 from screener.ai.stock_analyzer import analyze_stock
-from screener.plugins.llm_analysis.plugin import LLMAnalsysisPlugin
+from screener.plugins.llm_analysis.plugin import LLMAnalysisPlugin
 from screener.eastmoney_utils import get_eastmoney_watchlist, get_eastmoney_portfolio, get_tenjqka_watchlist, get_tenjqka_portfolio, get_longbridge_watchlist, get_longbridge_portfolio
 
 logger = logging.getLogger("stock_selector.plugins.stock_list_analysis")
@@ -32,7 +32,7 @@ class StockListAnalysisPlugin(Plugin):
         """初始化插件"""
         try:
             # 初始化 LLM 分析插件
-            self.llm_plugin = LLMAnalsysisPlugin("llm_analysis", {"enabled": True})
+            self.llm_plugin = LLMAnalysisPlugin("llm_analysis", {"enabled": True})
             self.llm_plugin.initialize()
             
             logger.info("股票列表分析插件初始化成功")

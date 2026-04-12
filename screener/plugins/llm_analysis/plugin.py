@@ -17,7 +17,7 @@ from .search_service import SearchService
 logger = logging.getLogger("stock_selector.plugin.llm_analysis")
 
 
-class LLMAnalsysisPlugin(Plugin):
+class LLMAnalysisPlugin(Plugin):
     """
     LLM 分析插件
     集成 stock selector 的 AI 分析和新闻搜索功能

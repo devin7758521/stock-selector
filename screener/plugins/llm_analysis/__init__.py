@@ -3,6 +3,6 @@
 LLM 分析插件
 """
 
-from .plugin import LLMAnalsysisPlugin
+from .plugin import LLMAnalysisPlugin
 
-__all__ = ['LLMAnalsysisPlugin']
+__all__ = ['LLMAnalysisPlugin']

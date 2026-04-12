@@ -143,8 +143,8 @@ class PluginManager:
                     return True
             
             elif plugin_name == "llm_analysis":
-                from screener.plugins.llm_analysis.plugin_enhanced import LLMAnalsysisPlugin
-                plugin = LLMAnalsysisPlugin(plugin_name, config)
+                from screener.plugins.llm_analysis.plugin_enhanced import LLMAnalysisPlugin
+                plugin = LLMAnalysisPlugin(plugin_name, config)
                 if plugin.initialize():
                     self.plugins[plugin_name] = plugin
                     return True
