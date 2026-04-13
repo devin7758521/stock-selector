@@ -897,21 +897,7 @@ class SearchService:
         self._providers: List[BaseSearchProvider] = []
         self.news_max_age_days = max(1, news_max_age_days)
 
-        # 初始化免费财经新闻源（优先使用）
-        self._providers.append(EastMoneySearchProvider())
-        self._providers.append(SinaFinanceSearchProvider())
-        self._providers.append(同花顺SearchProvider())
-        self._providers.append(XueQiuSearchProvider())
-        self._providers.append(GlobalFinanceSearchProvider())
-        logger.info("已配置免费财经新闻源：东方财富、新浪财经、同花顺、雪球、全球财经(WSJ/Reuters/Bloomberg)")
-
-        # 初始化付费搜索引擎（作为备选）
-        # 1. Bocha 优先（中文搜索优化，AI摘要）
-        if bocha_keys:
-            self._providers.append(BochaSearchProvider(bocha_keys))
-            logger.info(f"已配置 Bocha 搜索，共 {len(bocha_keys)} 个 API Key")
-
-        # 2. Tavily（免费额度更多，每月 1000 次）
+        # Tavily（AI优化搜索，每月1000次免费额度）
         if tavily_keys:
             self._providers.append(TavilySearchProvider(tavily_keys))
             logger.info(f"已配置 Tavily 搜索，共 {len(tavily_keys)} 个 API Key")
