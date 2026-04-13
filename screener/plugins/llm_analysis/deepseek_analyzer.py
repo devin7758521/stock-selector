@@ -187,9 +187,8 @@ class LLMNewsAnalyzer:
         return text if text else None
 
     def _get_gemini_url(self) -> str:
-        base = "https://generativelanguage.googleapis.com/v2beta/models"
-        if self.model.startswith("gemini-1"):
-            base = "https://generativelanguage.googleapis.com/v1beta/models"
+        # 统一使用 v1beta 端点，v2beta 已废弃
+        base = "https://generativelanguage.googleapis.com/v1beta/models"
         return f"{base}/{self.model_name}:generateContent"
 
     def _synthesize_gemini(self, user_prompt: str, max_tokens: int) -> Optional[str]:
