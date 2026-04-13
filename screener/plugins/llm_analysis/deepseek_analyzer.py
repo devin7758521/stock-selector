@@ -186,10 +186,16 @@ class LLMNewsAnalyzer:
         text = (content or "").strip()
         return text if text else None
 
+    def _get_gemini_url(self) -> str:
+        base = "https://generativelanguage.googleapis.com/v2beta/models"
+        if self.model.startswith("gemini-1"):
+            base = "https://generativelanguage.googleapis.com/v1beta/models"
+        return f"{base}/{self.model_name}:generateContent"
+
     def _synthesize_gemini(self, user_prompt: str, max_tokens: int) -> Optional[str]:
         import requests
 
-        url = f"{GEMINI_API_URL}/{self.model_name}:generateContent?key={self.api_key}"
+        url = f"{self._get_gemini_url()}?key={self.api_key}"
         payload = {
             "contents": [
                 {
@@ -293,7 +299,7 @@ class LLMNewsAnalyzer:
 
 请进行深度分析并输出JSON格式结果。"""
 
-        url = f"{GEMINI_API_URL}/{self.model_name}:generateContent?key={self.api_key}"
+        url = f"{self._get_gemini_url()}?key={self.api_key}"
 
         payload = {
             "contents": [{
