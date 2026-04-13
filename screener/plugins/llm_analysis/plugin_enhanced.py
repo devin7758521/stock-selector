@@ -377,11 +377,13 @@ class LLMAnalysisPlugin(Plugin):
 
         try:
             context, success = build_news_context(code, name, days=7, max_results=5)
-            if success:
+            if success and context:
                 logger.info(f"AkShare 新闻搜索成功: {name}({code})")
                 return context
+            else:
+                logger.warning(f"AkShare 新闻搜索返回空: {name}({code})")
         except Exception as e:
-            logger.warning(f"AkShare 新闻搜索失败: {e}")
+            logger.warning(f"AkShare 新闻搜索异常: {name}({code}), {e}")
 
         try:
             if self.search_service:
