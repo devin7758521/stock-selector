@@ -28,6 +28,7 @@ jobs:
       #   GEMINI_API_KEY + LLM_MODEL=gemini-2.5-flash（或你在 AI Studio 中的模型 ID）
       - name: Run screener
         env:
+          TZ: Asia/Shanghai
           TUSHARE_TOKEN:     ${{ secrets.TUSHARE_TOKEN }}
           JQ_USERNAME:       ${{ secrets.JQ_USERNAME }}
           JQ_PASSWORD:       ${{ secrets.JQ_PASSWORD }}
