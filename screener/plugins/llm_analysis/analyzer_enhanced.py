@@ -863,7 +863,7 @@ class EnhancedLLMAnalyzer:
             buy_reason="N/A",
             model_used=self.model_used,
             success=False,
-            stars=3,
-            star_reason="分析失败，无法给出打星理由",
+            stars=0,
+            star_reason="分析异常，跳过评级",
             error_message=error_message
         )

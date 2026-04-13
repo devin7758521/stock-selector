@@ -169,20 +169,6 @@ class StockSelector:
         # 输出漏斗统计（帮助诊断每步过滤了多少）
         print_stats()
         
-        # 限制五星股票最多两个
-        five_star_count = 0
-        for stock in results:
-            if stock.get('ai_star_rating', 0) == 5:
-                if five_star_count < 2:
-                    five_star_count += 1
-                else:
-                    # 超过两个五星，降级为四星
-                    stock['ai_star_rating'] = 4
-                    stock['ai_star_display'] = "⭐" * 4
-                    # 更新评级理由
-                    if 'ai_rating_reason' in stock:
-                        stock['ai_rating_reason'] = stock['ai_rating_reason'] + "；由于五星股票数量限制，降级为四星"
-        
         # 输出结果
         logger.info("=" * 55)
         logger.info(f"筛选完成: 入选 {len(results)} 只 / 跳过失败 {failed} 只")
