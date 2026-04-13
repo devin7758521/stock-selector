@@ -118,7 +118,7 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
     if is_market_open():
         logger.debug("当前是开市时间，尝试使用实时成交额")
         # 尝试获取实时快照数据
-        spot_df = fetch_spot_data()
+        spot_df = fetch_spot_data(self.config)
         if spot_df is not None:
             # 从实时快照中获取成交额
             code = df_daily.iloc[-1].get("code", "")
