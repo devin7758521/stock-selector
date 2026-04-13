@@ -13,4 +13,5 @@ lxml[html_clean]
 PyQt6
 tenacity
 beautifulsoup4
+tavily-python
 

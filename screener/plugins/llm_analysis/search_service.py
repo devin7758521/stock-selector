@@ -999,37 +999,17 @@ class TavilySearchProvider(BaseSearchProvider):
 
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
         try:
-            import requests
+            from tavily import TavilyClient
 
-            url = "https://api.tavily.com/search"
-            payload = {
-                "query": query,
-                "search_depth": "basic",
-                "max_results": max_results,
-                "include_answer": False,
-                "include_raw_content": False,
-                "include_images": False
-            }
-            headers = {
-                "Content-Type": "application/json",
-                "api_key": api_key
-            }
+            client = TavilyClient(api_key=api_key)
+            response = client.search(
+                query=query,
+                search_depth="advanced",
+                max_results=max_results
+            )
 
-            response = requests.post(url, json=payload, headers=headers, timeout=15)
-
-            if response.status_code != 200:
-                return SearchResponse(
-                    query=query,
-                    results=[],
-                    provider=self.name,
-                    success=False,
-                    error_message=f"Tavily API错误: {response.status_code}"
-                )
-
-            data = response.json()
             results = []
-
-            for item in data.get("results", [])[:max_results]:
+            for item in response.get("results", [])[:max_results]:
                 results.append(SearchResult(
                     title=item.get("title", ""),
                     snippet=item.get("content", "")[:200],
