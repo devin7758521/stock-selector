@@ -1,0 +1,44 @@
+# stock selector 配置文件
+
+datasources:
+  tushare_token: ""
+  joinquant_username: ""
+  joinquant_password: ""
+  mairui_token: ""
+
+screener:
+  price_min: 3
+  price_max: 70
+  min_listed_days: 730
+  weekly_ma: 25
+  vol_ma_short: 5
+  vol_ma_long: 60
+  vol_deviation_min: -0.03
+  vol_deviation_max: 0.07
+  min_daily_amount: 300000000
+  spot_prefilter_amount: 200000000
+  weekly_mode: "realtime"
+
+request:
+  max_workers: 8
+  delay_min: 0.2
+  delay_max: 0.5
+  max_retries: 3
+  retry_backoff: 2
+
+wecom:
+  webhook_url: ""
+
+plugins:
+  ai_analysis:
+    enabled: true
+  llm_analysis:
+    enabled: true
+    model: "gemini-2.5-flash"   # 或 deepseek-chat
+    api_key: ""                  # 填你的Key，或留空走环境变量 GEMINI_API_KEY
+  stock_list_analysis:
+    enabled: true
+  technical_analysis:
+    enabled: true
+  fundamental_analysis:
+    enabled: true

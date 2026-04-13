@@ -49,7 +49,6 @@ logs/
 *.json
 
 # Config with sensitive info
-config.yaml
 .env
 *.pem
 *.key
