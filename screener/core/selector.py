@@ -121,7 +121,7 @@ class StockSelector:
         
         # Step 0: 发送启动通知
         logger.info("Step 0: 发送启动通知...")
-        send_wecom_start(self.config)
+        send_feishu_start(self.config)
         
         # Step 1: 获取股票列表
         logger.info("Step 1: 获取全量股票列表...")

@@ -12,7 +12,7 @@ screener - stock selector 选股核心模块
   from screener.datasources import fetch_stock_list, fetch_daily_kline, fetch_spot_data
   from screener.filter import static_filter, calc_indicators
   from screener.calendar import resample_weekly_by_calendar, get_trade_dates
-  from screener.wecom import send_wecom
+  from screener.feishu import send_feishu
   from screener.utils import load_config
 """
 

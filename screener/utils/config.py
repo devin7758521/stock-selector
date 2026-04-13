@@ -19,6 +19,7 @@ def load_config(path: str = "config.yaml") -> dict:
     cfg.setdefault("screener", {})
     cfg.setdefault("request", {})
     cfg.setdefault("wecom", {})
+    cfg.setdefault("feishu", {})
     cfg.setdefault("plugins", {
         "llm_analysis": {"enabled": True},
         "ai_analysis": {"enabled": True},
@@ -34,6 +35,7 @@ def load_config(path: str = "config.yaml") -> dict:
         "JQ_PASSWORD":         ("datasources", "joinquant_password"),
         "MAIRUI_TOKEN":        ("datasources", "mairui_token"),
         "WECOM_WEBHOOK_URL":   ("wecom", "webhook_url"),
+        "FEISHU_WEBHOOK_URL":   ("feishu", "webhook_url"),
     }
     for env_key, (section, field) in env_map.items():
         val = os.environ.get(env_key, "").strip()
