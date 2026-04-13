@@ -520,6 +520,74 @@ class EnhancedLLMAnalyzer:
             return 2
         return 1
 
+    def _get_llm_synthesis(self, stars: int, weighted_score: float,
+                          technical_detail: str, fundamental_detail: str,
+                          news_detail: str, policy_detail: str,
+                          market_detail: str, news_headlines: str,
+                          policy_info: str, macro_info: str,
+                          ai_analysis: Optional[Dict]) -> str:
+        """调用 LLM 进行综合推理，生成有逻辑链的投资理由。"""
+        if not self.deepseek_analyzer:
+            return ""
+
+        stock_name = "标的"
+        td = technical_detail if technical_detail and technical_detail != "N/A" else "暂无技术面数据"
+        fd = fundamental_detail if fundamental_detail and fundamental_detail != "N/A" else "暂无基本面数据"
+        nd = news_detail if news_detail and news_detail != "N/A" else "暂无消息面数据"
+        if news_headlines:
+            nd = f"{nd}。新闻摘要：{news_headlines}"
+        pd = policy_detail if policy_detail and policy_detail != "N/A" else "暂无政策面数据"
+        if policy_info:
+            pd = f"{pd}。政策要点：{policy_info}"
+        md = market_detail if market_detail and market_detail != "N/A" else "暂无市场环境数据"
+        if macro_info:
+            md = f"{md}。宏观要点：{macro_info}"
+
+        ai_info = ""
+        if ai_analysis:
+            ai_signal = ai_analysis.get('ai_buy_signal', 'N/A')
+            ai_score_val = ai_analysis.get('ai_signal_score', 'N/A')
+            ai_info = f"AI技术指标信号：{ai_signal}（评分{ai_score_val}分）"
+
+        user_prompt = f"""请对以下股票进行多维度综合推理：
+
+【股票】{stock_name}
+【星级】{stars}星（满分5星）
+【综合评分】{weighted_score:.1f}分
+
+【技术面分析】
+{td}
+
+【基本面分析】
+{fd}
+
+【消息面分析】
+{nd}
+
+【政策面分析】
+{pd}
+
+【市场环境】
+{md}
+
+{f"【AI技术指标】{ai_info}" if ai_info else ""}
+
+请基于以上信息，输出：
+1. 指出各维度之间是否存在矛盾或共振
+2. 说明哪个维度是当前最关键的驱动因素
+3. 给出一段80-150字的综合投资理由，解释为什么该股值得或不值得投资
+
+语气要专业、客观、有逻辑性，避免套话。"""
+
+        try:
+            synthesis = self.deepseek_analyzer.synthesize(user_prompt, max_tokens=300)
+            if synthesis:
+                logger.info(f"LLM综合推理成功: {synthesis[:80]}...")
+                return synthesis
+        except Exception as e:
+            logger.warning(f"LLM综合推理失败: {e}")
+        return ""
+
     @staticmethod
     def _clip(text: str, max_len: int = 180) -> str:
         t = (text or "").replace("\n", " ").strip()
@@ -538,6 +606,13 @@ class EnhancedLLMAnalyzer:
                              llm_news_reason: str = "",
                              ai_analysis: Optional[Dict] = None) -> str:
         """生成打星理由：五星须写清「凭什么五星」；不写权重公式与交叉验证等长篇推理。"""
+
+        llm_synthesis = self._get_llm_synthesis(
+            stars, weighted_score, technical_detail, fundamental_detail,
+            news_detail, policy_detail, market_detail, news_headlines,
+            policy_info, macro_info, ai_analysis
+        )
+
         star_desc = {
             5: "五星评级，强烈推荐",
             4: "四星评级，值得关注",
@@ -612,7 +687,11 @@ class EnhancedLLMAnalyzer:
             analysis_reasons.append("【说明】未配置 LLM 时新闻为关键词摘要")
 
         reasons.append(f"加权综合约{weighted_score:.0f}分（模型内部口径，非投资建议）")
-        reasons.extend(analysis_reasons)
+
+        if llm_synthesis:
+            reasons.append(f"【LLM综合推理】{llm_synthesis}")
+        else:
+            reasons.extend(analysis_reasons)
         final_advice = self._generate_final_advice(
             stars, weighted_score, technical_detail, fundamental_detail, news_detail, policy_detail
         )
