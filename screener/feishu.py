@@ -149,8 +149,8 @@ def send_feishu(results: List[Dict], cfg: dict) -> bool:
             ""
         ]
 
-        for r in top_results:
-            stock_line = f"▶ {r['name']}（{r['code']}）"
+        for i, r in enumerate(top_results, 1):
+            stock_line = f"{i}. ▶ {r['name']}（{r['code']}）"
             content_lines.append(stock_line)
 
             if 'price' in r:
