@@ -19,7 +19,7 @@ import argparse
 import logging
 
 # 设置日志级别为DEBUG，以便查看详细的成交额信息
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 
 from screener.core import StockSelector
 

@@ -1008,8 +1008,13 @@ class TavilySearchProvider(BaseSearchProvider):
                 max_results=max_results
             )
 
+            if not isinstance(response, dict):
+                response = dict(response) if hasattr(response, '__dict__') else {}
+
             results = []
-            for item in response.get("results", [])[:max_results]:
+            for item in (response.get("results") or [])[:max_results]:
+                if not isinstance(item, dict):
+                    continue
                 results.append(SearchResult(
                     title=item.get("title", ""),
                     snippet=item.get("content", "")[:200],

@@ -223,10 +223,17 @@ class LLMNewsAnalyzer:
                 f"Gemini 综合推理 API 失败: {response.status_code} - {response.text[:500]}"
             )
             return None
+        result = response.json()
+        candidates = result.get("candidates", [])
+        if not candidates:
+            logger.warning("Gemini 综合推理返回空 candidates")
+            return None
+        candidate = candidates[0]
+        if candidate.get("finishReason") == "SAFETY":
+            logger.warning("Gemini 综合推理因安全过滤被拦截")
+            return None
         content = (
-            response.json()
-            .get("candidates", [{}])[0]
-            .get("content", {})
+            candidate.get("content", {})
             .get("parts", [{}])[0]
             .get("text", "")
         )
@@ -251,8 +258,12 @@ class LLMNewsAnalyzer:
             "Authorization": f"Bearer {self.api_key}"
         }
 
+        model = self.model_name
+        if model in ("deepseek", "local", ""):
+            model = "deepseek-chat"
+
         payload = {
-            "model": self.model_name,
+            "model": model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt}
@@ -341,7 +352,35 @@ class LLMNewsAnalyzer:
             )
 
         result = response.json()
-        content = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        candidates = result.get("candidates", [])
+        if not candidates:
+            logger.warning(f"Gemini 分析返回空 candidates: {stock_name} ({code})")
+            return LLMAnalysisResult(
+                sentiment_score=50,
+                sentiment_reason="Gemini 返回空结果",
+                key_events=[],
+                policy_impact="无法分析",
+                macro_impact="无法分析",
+                investment_suggestion="观望",
+                confidence="低",
+                success=False,
+                error_message="Gemini 返回空 candidates"
+            )
+        candidate = candidates[0]
+        if candidate.get("finishReason") == "SAFETY":
+            logger.warning(f"Gemini 分析因安全过滤被拦截: {stock_name} ({code})")
+            return LLMAnalysisResult(
+                sentiment_score=50,
+                sentiment_reason="内容被安全过滤拦截",
+                key_events=[],
+                policy_impact="无法分析",
+                macro_impact="无法分析",
+                investment_suggestion="观望",
+                confidence="低",
+                success=False,
+                error_message="Gemini 安全过滤拦截"
+            )
+        content = candidate.get("content", {}).get("parts", [{}])[0].get("text", "")
 
         logger.info(f"Gemini 分析成功: {stock_name} ({code})")
 

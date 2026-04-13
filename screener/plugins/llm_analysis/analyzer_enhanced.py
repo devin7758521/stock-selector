@@ -525,12 +525,12 @@ class EnhancedLLMAnalyzer:
                           news_detail: str, policy_detail: str,
                           market_detail: str, news_headlines: str,
                           policy_info: str, macro_info: str,
-                          ai_analysis: Optional[Dict]) -> str:
+                          ai_analysis: Optional[Dict],
+                          stock_name: str = "标的") -> str:
         """调用 LLM 进行综合推理，生成有逻辑链的投资理由。"""
         if not self.deepseek_analyzer:
             return ""
 
-        stock_name = "标的"
         td = technical_detail if technical_detail and technical_detail != "N/A" else "暂无技术面数据"
         fd = fundamental_detail if fundamental_detail and fundamental_detail != "N/A" else "暂无基本面数据"
         nd = news_detail if news_detail and news_detail != "N/A" else "暂无消息面数据"
@@ -610,7 +610,8 @@ class EnhancedLLMAnalyzer:
         llm_synthesis = self._get_llm_synthesis(
             stars, weighted_score, technical_detail, fundamental_detail,
             news_detail, policy_detail, market_detail, news_headlines,
-            policy_info, macro_info, ai_analysis
+            policy_info, macro_info, ai_analysis,
+            stock_name=stock_name
         )
 
         star_desc = {

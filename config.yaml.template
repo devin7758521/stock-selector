@@ -5,56 +5,45 @@
 # 1. 复制此文件为 config.yaml
 # 2. 填入您的API密钥和配置
 
-# 数据源配置（可选）
 datasources:
-  tushare_token: ""  # Tushare API Token
-  joinquant_username: ""  # JoinQuant 用户名
-  joinquant_password: ""  # JoinQuant 密码
-  mairui_token: ""  # 迈瑞 API Token
+  tushare_token: ""
+  joinquant_username: ""
+  joinquant_password: ""
+  mairui_token: ""
 
-# 选股配置
 screener:
-  price_min: 3  # 最低价格
-  price_max: 70  # 最高价格
-  min_listed_days: 730  # 最小上市天数（2年）
-  weekly_ma: 25  # 周均线
-  vol_ma_short: 5  # 短期成交量均线
-  vol_ma_long: 60  # 长期成交量均线
-  vol_deviation_min: -0.03  # 成交量偏差最小值
-  vol_deviation_max: 0.07  # 成交量偏差最大值
-  min_daily_amount: 300000000  # 最低日成交额（3亿）
-  spot_prefilter_amount: 200000000  # 预筛选成交额（2亿）
-  weekly_mode: "realtime"  # 周K模式：realtime 或 completed
+  price_min: 3
+  price_max: 70
+  min_listed_days: 730
+  weekly_ma: 25
+  vol_ma_short: 5
+  vol_ma_long: 60
+  vol_deviation_min: -0.03
+  vol_deviation_max: 0.07
+  min_daily_amount: 300000000
+  spot_prefilter_amount: 200000000
+  weekly_mode: "realtime"
 
-# 请求配置
 request:
-  max_workers: 8  # 最大工作线程数
-  delay_min: 0.2  # 最小延迟（秒）
-  delay_max: 0.5  # 最大延迟（秒）
-  max_retries: 3  # 最大重试次数
-  retry_backoff: 2  # 重试退避系数
+  max_workers: 8
+  delay_min: 0.2
+  delay_max: 0.5
+  max_retries: 3
+  retry_backoff: 2
 
-# 企业微信配置
 wecom:
-  webhook_url: ""  # 企业微信 Webhook URL
+  webhook_url: ""
 
-# 插件（执行顺序：按下方列表优先级自动排序，不必手写顺序）
-# technical → fundamental → ai → … → llm 最后，否则 LLM 读不到技术与基本面
 plugins:
+  ai_analysis:
+    enabled: true
+  llm_analysis:
+    enabled: true
+    model: "gemini-2.5-flash"
+    api_key: ""
+  stock_list_analysis:
+    enabled: true
   technical_analysis:
     enabled: true
   fundamental_analysis:
     enabled: true
-  ai_analysis:
-    enabled: true
-  stock_list_analysis:
-    enabled: true
-  llm_analysis:
-    enabled: true
-    # API配置（可通过环境变量覆盖）
-    api_key: ""  # DeepSeek API Key
-    model: "deepseek"  # 模型类型：deepseek / gemini / local
-    weights:
-      llm: 0.5  # LLM评分权重
-      ai: 0.3   # AI评分权重
-      technical: 0.2  # 技术指标权重
