@@ -204,7 +204,9 @@ class LLMNewsAnalyzer:
                     ]
                 }
             ],
-            "systemInstruction": SYNTHESIS_SYSTEM_PROMPT,
+            "systemInstruction": {
+                "parts": [{"text": SYNTHESIS_SYSTEM_PROMPT}]
+            },
             "generationConfig": {
                 "temperature": 0.35,
                 "maxOutputTokens": max_tokens,
@@ -309,7 +311,9 @@ class LLMNewsAnalyzer:
                     "text": user_prompt
                 }]
             }],
-            "systemInstruction": SYSTEM_PROMPT,
+            "systemInstruction": {
+                "parts": [{"text": SYSTEM_PROMPT}]
+            },
             "generationConfig": {
                 "temperature": 0.3,
                 "maxOutputTokens": 1000
