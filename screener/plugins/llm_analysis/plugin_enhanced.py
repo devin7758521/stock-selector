@@ -364,32 +364,38 @@ class LLMAnalysisPlugin(Plugin):
     
     def _search_news(self, code: str, name: str) -> Optional[str]:
         """
-        搜索股票相关新闻
-        
+        搜索股票相关新闻，优先用 AkShare，失败则用 search_service 备用
+
         Args:
             code: 股票代码
             name: 股票名称
-            
+
         Returns:
             新闻上下文
         """
+        from screener.news_akshare import build_news_context
+
         try:
-            if not self.search_service:
-                return None
-            
-            query = f"{name} {code} 股票 新闻 公告"
-            response = self.search_service.search(query, max_results=5, days=7)
-            
-            if response.success and response.results:
-                logger.info(f"搜索到 {len(response.results)} 条新闻: {query}")
-                return response.to_context(max_results=5)
-            else:
-                logger.debug(f"搜索新闻失败: {response.error_message}")
-            
-            return None
+            context, success = build_news_context(code, name, days=7, max_results=5)
+            if success:
+                logger.info(f"AkShare 新闻搜索成功: {name}({code})")
+                return context
         except Exception as e:
-            logger.debug(f"搜索新闻失败: {e}")
-            return None
+            logger.warning(f"AkShare 新闻搜索失败: {e}")
+
+        try:
+            if self.search_service:
+                query = f"{name} {code} 股票 新闻 公告"
+                response = self.search_service.search(query, max_results=5, days=7)
+                if response.success and response.results:
+                    logger.info(f"备用搜索到 {len(response.results)} 条新闻: {query}")
+                    return response.to_context(max_results=5)
+                else:
+                    logger.debug(f"备用搜索失败: {response.error_message}")
+        except Exception as e:
+            logger.debug(f"备用搜索异常: {e}")
+
+        return None
     
     def cleanup(self):
         """

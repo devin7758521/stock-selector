@@ -12,7 +12,7 @@ from tqdm import tqdm
 from screener.utils import load_config
 from screener.datasources import fetch_stock_list, fetch_daily_kline, fetch_spot_data
 from screener.filter import static_filter, calc_indicators, print_stats
-from screener.wecom import send_wecom, send_wecom_start
+from screener.feishu import send_feishu, send_feishu_start
 from .plugin import PluginManager
 
 logger = logging.getLogger("stock_selector.selector")
@@ -233,8 +233,8 @@ class StockSelector:
             reverse=True,
         )
 
-        # Step 6: 企业微信推送
-        logger.info("Step 6: 推送企业微信...")
-        send_wecom(sorted_results, self.config)
+        # Step 6: 飞书推送
+        logger.info("Step 6: 推送飞书...")
+        send_feishu(sorted_results, self.config)
         
         return sorted_results
