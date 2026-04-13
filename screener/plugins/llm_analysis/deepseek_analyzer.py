@@ -198,11 +198,13 @@ class LLMNewsAnalyzer:
         payload = {
             "contents": [
                 {
+                    "role": "user",
                     "parts": [
-                        {"text": f"{SYNTHESIS_SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"}
+                        {"text": user_prompt}
                     ]
                 }
             ],
+            "systemInstruction": SYNTHESIS_SYSTEM_PROMPT,
             "generationConfig": {
                 "temperature": 0.35,
                 "maxOutputTokens": max_tokens,
@@ -302,10 +304,12 @@ class LLMNewsAnalyzer:
 
         payload = {
             "contents": [{
+                "role": "user",
                 "parts": [{
-                    "text": f"{SYSTEM_PROMPT}\n\n{user_prompt}"
+                    "text": user_prompt
                 }]
             }],
+            "systemInstruction": SYSTEM_PROMPT,
             "generationConfig": {
                 "temperature": 0.3,
                 "maxOutputTokens": 1000
