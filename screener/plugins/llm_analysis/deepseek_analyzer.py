@@ -360,6 +360,21 @@ class LLMNewsAnalyzer:
         }
 
         logger.info(f"使用 DeepSeek 模型: {model}")
+        if self.deepseek_api_key:
+            logger.info(f"DeepSeek API Key 后4位: ...{self.deepseek_api_key[-4:]}")
+        else:
+            logger.error("DeepSeek API Key 为空！无法调用 API")
+            return LLMAnalysisResult(
+                sentiment_score=50,
+                sentiment_reason="DeepSeek API Key 未设置",
+                key_events=[],
+                policy_impact="无",
+                macro_impact="无",
+                investment_suggestion="观望",
+                confidence="低",
+                success=False,
+                error_message="DeepSeek API Key 未设置"
+            )
         response = requests.post(
             DEEPSEEK_API_URL,
             headers=headers,
