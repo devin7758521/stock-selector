@@ -183,10 +183,6 @@ def search_akshare_market_news(days: int = 3, max_results: int = 10) -> List[New
     """
     results: List[NewsResult] = []
 
-def _search_market_news_akshare(days: int, max_results: int) -> List[NewsResult]:
-    """使用 AkShare 获取市场/宏观财经新闻"""
-    results: List[NewsResult] = []
-
     try:
         import akshare as ak
 
