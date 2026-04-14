@@ -17,7 +17,7 @@ Copyright (c) 2026 stock selector. All rights reserved.
 import sys
 import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from screener.core.plugin import Plugin
 from .analyzer_enhanced import EnhancedLLMAnalyzer
