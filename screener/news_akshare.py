@@ -183,43 +183,74 @@ def search_akshare_market_news(days: int = 3, max_results: int = 10) -> List[New
     """
     results: List[NewsResult] = []
 
+def _search_market_news_akshare(days: int, max_results: int) -> List[NewsResult]:
+    """使用 AkShare 获取市场/宏观财经新闻"""
+    results: List[NewsResult] = []
+
     try:
         import akshare as ak
 
-        try:
-            df = ak.stock_teleport_em()
-            if df is not None and not df.empty:
-                count = 0
-                for _, row in df.iterrows():
-                    if count >= max_results:
-                        break
-                    title = str(row.get('新闻标题', '')).strip()
-                    if _is_ad(title):
-                        continue
-                    content = str(row.get('新闻内容', '')).strip()
-                    url = str(row.get('来源链接', '')).strip()
-                    pub = str(row.get('发布时间', '')).strip()
-                    if pub and not _parse_date(pub, days):
-                        continue
-                    sentiment = _classify_sentiment(title, content)
-                    news_result = NewsResult(
-                        title=title,
-                        content=content[:300] if content else '',
-                        url=url,
-                        source="东方财富宏观",
-                        pub_date=pub
-                    )
-                    news_result.sentiment = sentiment
-                    results.append(news_result)
-                    count += 1
-                logger.info(f"AkShare 宏观新闻: 获取到 {len(results)} 条")
-        except Exception as e:
-            logger.warning(f"AkShare stock_teleport_em 失败: {e}")
+        news_funcs = [
+            ("stock_hot_rank_em", lambda: ak.stock_hot_rank_em()),
+            ("stock_zt_pool_em", lambda: ak.stock_zt_pool_em(date="latest")),
+            ("news_em", lambda: ak.news_em()),
+        ]
+
+        for func_name, func_call in news_funcs:
+            try:
+                df = func_call()
+                if df is not None and not df.empty and len(df) > 0:
+                    count = 0
+                    for _, row in df.iterrows():
+                        if count >= max_results:
+                            break
+                        title = ""
+                        content = ""
+                        pub = ""
+                        url = ""
+                        source = "东方财富"
+
+                        if func_name == "stock_hot_rank_em":
+                            title = str(row.get('股票名称', row.get('证券名称', '')))
+                            source = "东方财富热门"
+                        elif func_name == "stock_zt_pool_em":
+                            title = f"涨停: {row.get('名称', '')} 涨跌幅:{row.get('涨跌幅', '')}%"
+                            source = "东方财富涨停"
+                        elif func_name == "news_em":
+                            title = str(row.get('新闻标题', row.get('标题', '')))
+                            content = str(row.get('新闻内容', row.get('内容', '')))[:200]
+                            pub = str(row.get('发布时间', row.get('时间', '')))
+                            url = str(row.get('来源链接', row.get('来源', '')))
+                            source = "东方财富财经"
+
+                        if not title or _is_ad(title):
+                            continue
+                        if pub and not _parse_date(pub, days):
+                            continue
+
+                        sentiment = _classify_sentiment(title, content)
+                        news_result = NewsResult(
+                            title=title,
+                            content=content[:200] if content else '',
+                            url=url,
+                            source=source,
+                            pub_date=pub
+                        )
+                        news_result.sentiment = sentiment
+                        results.append(news_result)
+                        count += 1
+
+                    if results:
+                        logger.info(f"AkShare 市场新闻({func_name}): 获取到 {len(results)} 条")
+                        return results
+            except Exception as e:
+                logger.debug(f"AkShare {func_name} 失败: {e}")
+                continue
 
     except ImportError:
         logger.warning("AkShare 未安装")
     except Exception as e:
-        logger.warning(f"AkShare 宏观新闻失败: {e}")
+        logger.warning(f"AkShare 市场新闻初始化失败: {e}")
 
     return results
 

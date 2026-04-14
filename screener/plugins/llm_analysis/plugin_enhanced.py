@@ -415,8 +415,8 @@ class LLMAnalysisPlugin(Plugin):
                 macro_max=5
             )
 
-            if success and self.deepseek_analyzer:
-                summarized = self.deepseek_analyzer.summarize_news(stock_ctx, market_ctx, macro_ctx)
+            if success and self.analyzer and hasattr(self.analyzer, 'summarize_news'):
+                summarized = self.analyzer.summarize_news(stock_ctx, market_ctx, macro_ctx)
                 if summarized:
                     logger.info(f"三类新闻汇总成功: {name}({code})")
                     return summarized
