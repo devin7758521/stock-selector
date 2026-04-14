@@ -69,7 +69,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
             logger.info(f"[spot/akshare] 实时快照: {len(df)} 只")
             return df
     except Exception as e:
-        logger.warning(f"[spot/akshare] 失败: {e}")
+        logger.debug(f"[spot/akshare] 失败: {e}")
 
     # 2. 东方财富直接HTTP
     try:
