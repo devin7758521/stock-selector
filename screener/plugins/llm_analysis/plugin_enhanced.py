@@ -87,6 +87,12 @@ class LLMAnalysisPlugin(Plugin):
                     or os.environ.get("DEEPSEEK_API_KEY", "")
                 )
 
+            deepseek_api_key = (
+                nested.get("deepseek_api_key")
+                or self.config.get("deepseek_api_key")
+                or os.environ.get("DEEPSEEK_API_KEY", "")
+            )
+
             tavily_keys = []
             tavily_key = os.environ.get('TAVILY_API_KEY', '')
             if tavily_key:
@@ -95,7 +101,8 @@ class LLMAnalysisPlugin(Plugin):
             self.analyzer = EnhancedLLMAnalyzer(
                 api_key=api_key,
                 model=primary_model,
-                fallback_model=fallback_model
+                fallback_model=fallback_model,
+                deepseek_api_key=deepseek_api_key
             )
             self.search_service = SearchService(tavily_keys=tavily_keys if tavily_keys else None)
 

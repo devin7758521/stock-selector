@@ -78,7 +78,7 @@ class EnhancedLLMAnalyzer:
     # 可调：低于该加权分则为 0 星（无星）
     WEIGHTED_SCORE_ZERO_STAR_BELOW: float = 32.0
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "local", fallback_model: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = "local", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None):
         """
         初始化分析器
 
@@ -86,10 +86,12 @@ class EnhancedLLMAnalyzer:
             api_key: LLM API密钥（可选）
             model: 使用的模型（local/gpt-4/claude/deepseek等）
             fallback_model: 备用模型（当主模型失败时自动切换）
+            deepseek_api_key: DeepSeek 专用 API Key（用于 fallback）
         """
         self.api_key = api_key
         self.model = model
         self.fallback_model = fallback_model
+        self.deepseek_api_key = deepseek_api_key
         self.model_used = f"Enhanced {model.upper()}" if model != "local" else "Enhanced Local Analyzer"
 
         self.llm_client = None
@@ -98,7 +100,7 @@ class EnhancedLLMAnalyzer:
         if api_key and model != "local":
             try:
                 from .deepseek_analyzer import LLMNewsAnalyzer
-                self.deepseek_analyzer = LLMNewsAnalyzer(api_key, model, fallback_model=fallback_model)
+                self.deepseek_analyzer = LLMNewsAnalyzer(api_key, model, fallback_model=fallback_model, deepseek_api_key=deepseek_api_key)
                 logger.info(f"已初始化LLMNewsAnalyzer新闻分析器 (主模型: {model}, 备用: {fallback_model})")
             except ImportError as e:
                 logger.warning(f"无法导入LLM分析器: {e}")

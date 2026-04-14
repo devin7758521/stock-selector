@@ -117,19 +117,21 @@ class LLMNewsAnalyzer:
     支持 DeepSeek 和 Gemini 两大LLM进行新闻分析。
     """
 
-    def __init__(self, api_key: str, model: str = "deepseek", fallback_model: Optional[str] = None):
+    def __init__(self, api_key: str, model: str = "deepseek", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None):
         """
         初始化 LLM 新闻分析器
 
         Args:
-            api_key: API 密钥
+            api_key: 主模型 API 密钥
             model: 主模型名称，如 deepseek-chat、gemini-1.5-flash 等
             fallback_model: 备用模型名称，如 deepseek-reasoner 等
+            deepseek_api_key: DeepSeek 专用 API Key（用于 fallback）
         """
         self.api_key = api_key
         self.model = model
         self.fallback_model = fallback_model
         self.model_name = model
+        self.deepseek_api_key = deepseek_api_key or api_key
 
     def analyze(self, news_context: str, stock_name: str,
                 code: str, industry: Optional[str] = None) -> LLMAnalysisResult:
@@ -234,7 +236,7 @@ class LLMNewsAnalyzer:
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {self.deepseek_api_key}",
         }
         model = self.fallback_model if self.fallback_model else self.model_name
         if model in ("deepseek", "local", ""):
@@ -335,7 +337,7 @@ class LLMNewsAnalyzer:
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
+            "Authorization": f"Bearer {self.deepseek_api_key}"
         }
 
         model = self.fallback_model if self.fallback_model else self.model_name
