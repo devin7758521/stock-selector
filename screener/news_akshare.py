@@ -13,6 +13,7 @@ Copyright (c) 2026 stock selector
 """
 
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 
@@ -298,7 +299,7 @@ def search_stock_news_fallback(stock_code: str, stock_name: str = "",
 def build_news_context(stock_code: str, stock_name: str = "",
                        days: int = 7, max_results: int = 5) -> tuple[str, bool]:
     """
-    构建新闻上下文字符串，优先用 AkShare，失败则用备用爬虫
+    构建新闻上下文字符串，优先用 AkShare，失败则用备用爬虫/Tavily
 
     Args:
         stock_code: 股票代码
@@ -320,6 +321,11 @@ def build_news_context(stock_code: str, stock_name: str = "",
             news_list = fallback_results
 
     if not news_list:
+        tavily_results = search_tavily_stock_news(stock_name, stock_code, days, max_results)
+        if tavily_results:
+            news_list = tavily_results
+
+    if not news_list:
         return "", False
 
     lines = [f"【{stock_name or stock_code} 新闻/公告】"]
@@ -330,6 +336,59 @@ def build_news_context(stock_code: str, stock_name: str = "",
             lines.append(f"   {news.content[:150]}...")
 
     return "\n".join(lines), True
+
+
+def search_tavily_stock_news(stock_name: str, stock_code: str = "",
+                             days: int = 7, max_results: int = 5) -> List[NewsResult]:
+    """
+    使用 Tavily AI 搜索增强新闻覆盖
+
+    Args:
+        stock_name: 股票名称
+        stock_code: 股票代码
+        days: 时间范围
+        max_results: 最大条数
+
+    Returns:
+        新闻列表
+    """
+    results: List[NewsResult] = []
+
+    tavily_key = os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API_KEY")
+    if not tavily_key:
+        return results
+
+    try:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=tavily_key)
+
+        query = f"{stock_name} {stock_code} 股票 A股"
+        search_days = min(days, 7)
+
+        response = client.search(
+            query=query,
+            search_days=search_days,
+            max_results=max_results
+        )
+
+        for item in response.get("results", [])[:max_results]:
+            results.append(NewsResult(
+                title=item.get("title", "")[:200],
+                content=item.get("content", "")[:200],
+                url=item.get("url", ""),
+                source="Tavily",
+                pub_date=""
+            ))
+
+        if results:
+            logger.info(f"Tavily 个股新闻({stock_name}): 获取到 {len(results)} 条")
+
+    except ImportError:
+        logger.warning("Tavily 未安装: pip install tavily-python")
+    except Exception as e:
+        logger.warning(f"Tavily 搜索失败: {e}")
+
+    return results
 
 
 def build_macro_context(days: int = 3, max_results: int = 5) -> tuple[str, bool]:
