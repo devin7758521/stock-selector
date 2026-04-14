@@ -219,7 +219,7 @@ class EnhancedLLMAnalyzer:
             stars = self._calculate_stars(weighted_score)
 
             star_reason = self._generate_star_reason(
-                stars, weighted_score, llm_base_score, ai_score, tech_score,
+                stock_name, stars, weighted_score, llm_base_score, ai_score, tech_score,
                 technical_detail, fundamental_detail, news_detail,
                 policy_detail, market_detail, news_headlines, policy_info, macro_info,
                 llm_news_reason,
@@ -595,7 +595,7 @@ class EnhancedLLMAnalyzer:
             return t
         return t[: max_len - 1] + "…"
 
-    def _generate_star_reason(self, stars: int, weighted_score: float,
+    def _generate_star_reason(self, stock_name: str, stars: int, weighted_score: float,
                              llm_score: float, ai_score: int, tech_score: int,
                              technical_detail: str, fundamental_detail: str,
                              news_detail: str, policy_detail: str,
