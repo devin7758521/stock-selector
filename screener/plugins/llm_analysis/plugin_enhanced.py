@@ -93,6 +93,13 @@ class LLMAnalysisPlugin(Plugin):
                 or os.environ.get("DEEPSEEK_API_KEY", "")
             )
 
+            if api_key:
+                logger.info(f"主模型 API Key: ...{api_key[-4:] if len(api_key) > 4 else '****'}")
+            if deepseek_api_key:
+                logger.info(f"DeepSeek API Key: ...{deepseek_api_key[-4:] if len(deepseek_api_key) > 4 else '****'}")
+            else:
+                logger.warning("DEEPSEEK_API_KEY 未设置！fallback 将失败")
+
             tavily_keys = []
             tavily_key = os.environ.get('TAVILY_API_KEY', '')
             if tavily_key:
