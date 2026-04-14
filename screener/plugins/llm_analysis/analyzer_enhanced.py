@@ -342,12 +342,8 @@ class EnhancedLLMAnalyzer:
 
     def _calculate_weighted_score(self, llm_score: float, ai_score: int,
                                  tech_score: int) -> float:
-        """计算加权总分"""
-        return (
-            llm_score * 0.5 +
-            ai_score * 0.3 +
-            tech_score * 0.2
-        )
+        """计算加权总分：LLM综合评分70% + AI评分30%"""
+        return llm_score * 0.7 + ai_score * 0.3
 
     def _generate_operation_advice(self, weighted_score: float) -> tuple:
         """生成操作建议"""
