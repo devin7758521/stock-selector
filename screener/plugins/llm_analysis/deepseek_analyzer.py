@@ -131,7 +131,12 @@ class LLMNewsAnalyzer:
         self.model = model
         self.fallback_model = fallback_model
         self.model_name = model
-        self.deepseek_api_key = deepseek_api_key or api_key
+        if deepseek_api_key and deepseek_api_key.strip():
+            self.deepseek_api_key = deepseek_api_key
+        else:
+            self.deepseek_api_key = api_key
+            if "gemini" in model.lower() and self.deepseek_api_key:
+                logger.warning("DEEPSEEK_API_KEY 未设置，fallback 将使用主模型 API Key，可能导致认证失败！")
 
     def analyze(self, news_context: str, stock_name: str,
                 code: str, industry: Optional[str] = None) -> LLMAnalysisResult:
