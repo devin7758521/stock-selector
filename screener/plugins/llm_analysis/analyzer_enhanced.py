@@ -886,21 +886,19 @@ class EnhancedLLMAnalyzer:
 
     def rank_stocks(self, stock_results: List[Dict], top_n: int = 10) -> List[Dict]:
         """
-        对股票列表进行综合推理，筛选出最佳top_n只
+        对所有股票进行综合推理，按推理评分+成交量权重排序
 
         Args:
             stock_results: 股票分析结果列表
             top_n: 返回数量，默认10只
 
         Returns:
-            推理后的精选股票列表（已按推理分数重新排序）
+            推理后的股票列表（按推理分数+成交量权重排序）
         """
         if not stock_results:
             return []
-        if len(stock_results) <= top_n:
-            return stock_results
 
-        logger.info(f"开始LLM综合推理筛选Top{top_n}...")
+        logger.info(f"开始LLM综合推理（共{len(stock_results)}只）...")
 
         ranked_results = []
         for i, r in enumerate(stock_results):
@@ -927,7 +925,8 @@ class EnhancedLLMAnalyzer:
                     ai_analysis, stock_name
                 )
 
-                inference_score = self._parse_inference_score(synthesis, weighted_score, stars)
+                volume = r.get("volume", r.get("amount", 0))
+                inference_score = self._parse_inference_score(synthesis, weighted_score, stars, volume)
                 r["llm_inference_score"] = inference_score
                 r["llm_inference_reason"] = synthesis
 
@@ -941,16 +940,17 @@ class EnhancedLLMAnalyzer:
                 ranked_results.append(r)
 
         ranked_results.sort(key=lambda x: x.get("llm_inference_score", 0), reverse=True)
-        logger.info(f"LLM综合推理筛选完成，Top{top_n}: {[r['name'] for r in ranked_results[:top_n]]}")
+        logger.info(f"LLM综合推理完成，Top10: {[r['name'] for r in ranked_results[:10]]}")
 
-        return ranked_results[:top_n]
+        return ranked_results
 
-    def _parse_inference_score(self, synthesis: str, weighted_score: float, stars: int) -> float:
+    def _parse_inference_score(self, synthesis: str, weighted_score: float, stars: int, volume: float = 0) -> float:
         """
         从LLM推理文本中解析出量化评分
 
-        推理评分 = 加权分×50% + 推理质量分×50%
+        推理评分 = 加权分×85% + 推理质量分×10% + 成交量权重×5%
         推理质量分根据文本长度、逻辑完整性、是否有具体理由等评估
+        成交量权重：成交量大的股票获得轻微加分（最高+5分）
         """
         base_score = weighted_score
 
@@ -968,7 +968,11 @@ class EnhancedLLMAnalyzer:
             if "建议" in synthesis:
                 quality_bonus += 2
 
-            quality_bonus = min(quality_bonus, 15)
+            quality_bonus = min(quality_bonus, 10)
 
-        inference_score = base_score * 0.5 + (base_score + quality_bonus) * 0.5
+        volume_bonus = 0.0
+        if volume and volume > 0:
+            volume_bonus = min(5.0, (volume / 100000000) * 0.5)
+
+        inference_score = base_score * 0.85 + quality_bonus * 10 + volume_bonus
         return min(100, inference_score)
