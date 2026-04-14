@@ -337,6 +337,78 @@ def build_news_context(stock_code: str, stock_name: str = "",
     return "\n".join(lines), True
 
 
+def build_all_news_context(stock_code: str, stock_name: str = "",
+                           stock_days: int = 7, stock_max: int = 5,
+                           market_days: int = 3, market_max: int = 10,
+                           macro_days: int = 3, macro_max: int = 5) -> tuple[Optional[str], Optional[str], Optional[str], bool]:
+    """
+    构建三类新闻上下文（个股/市场/宏观），供LLM汇总使用
+
+    Returns:
+        (stock_news_context, market_news_context, macro_news_context, success)
+    """
+    stock_news = _search_news_list(stock_code, stock_name, stock_days, stock_max)
+    market_news = _search_market_news_list(market_days, market_max)
+    macro_news = _search_macro_news_list(macro_days, macro_max)
+
+    stock_ctx = _format_news_context(stock_news, f"{stock_name or stock_code}个股新闻") if stock_news else None
+    market_ctx = _format_news_context(market_news, "市场财经新闻") if market_news else None
+    macro_ctx = _format_news_context(macro_news, "宏观政策新闻") if macro_news else None
+
+    has_any = bool(stock_news or market_news or macro_news)
+    return stock_ctx, market_ctx, macro_ctx, has_any
+
+
+def _search_news_list(stock_code: str, stock_name: str, days: int, max_results: int) -> List[NewsResult]:
+    """搜索个股新闻"""
+    news_list: List[NewsResult] = []
+
+    akshare_results = search_akshare_stock_news(stock_code, stock_name, days, max_results)
+    if akshare_results:
+        news_list = akshare_results
+    else:
+        tavily_results = search_tavily_stock_news(stock_name, stock_code, days, max_results)
+        if tavily_results:
+            news_list = tavily_results
+        else:
+            fallback_results = search_stock_news_fallback(stock_code, stock_name, days, max_results)
+            if fallback_results:
+                news_list = fallback_results
+
+    return news_list
+
+
+def _search_market_news_list(days: int, max_results: int) -> List[NewsResult]:
+    """搜索市场新闻"""
+    try:
+        return search_akshare_market_news(days, max_results)
+    except Exception as e:
+        logger.warning(f"市场新闻搜索失败: {e}")
+        return []
+
+
+def _search_macro_news_list(days: int, max_results: int) -> List[NewsResult]:
+    """搜索宏观新闻"""
+    try:
+        return search_akshare_macro_news(days, max_results)
+    except Exception as e:
+        logger.warning(f"宏观新闻搜索失败: {e}")
+        return []
+
+
+def _format_news_context(news_list: List[NewsResult], title: str) -> str:
+    """格式化新闻列表为上下文字符串"""
+    if not news_list:
+        return ""
+    lines = [f"【{title}】"]
+    for i, news in enumerate(news_list, 1):
+        date_part = f" ({news.pub_date})" if news.pub_date else ""
+        lines.append(f"{i}. 【{news.source}】{news.title}{date_part}")
+        if news.content:
+            lines.append(f"   {news.content[:150]}...")
+    return "\n".join(lines)
+
+
 def search_tavily_stock_news(stock_name: str, stock_code: str = "",
                              days: int = 7, max_results: int = 5) -> List[NewsResult]:
     """
