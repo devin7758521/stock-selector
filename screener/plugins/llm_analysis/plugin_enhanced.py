@@ -58,16 +58,22 @@ class LLMAnalysisPlugin(Plugin):
             是否初始化成功
         """
         try:
-            # 支持两种写法：llm_analysis 下扁平 api_key/model，或嵌套 llm: { api_key, model }
             nested = self.config.get("llm") or {}
             if not isinstance(nested, dict):
                 nested = {}
-            model = (
-                nested.get("model")
-                or self.config.get("model")
-                or os.environ.get("LLM_MODEL", "deepseek")
+            
+            primary_model = (
+                nested.get("primary_model")
+                or self.config.get("primary_model")
+                or os.environ.get("LLM_PRIMARY_MODEL", "gemini-2.0-flash")
             )
-            if "gemini" in str(model).lower():
+            fallback_model = (
+                nested.get("fallback_model")
+                or self.config.get("fallback_model")
+                or os.environ.get("LLM_FALLBACK_MODEL", "deepseek-reasoner")
+            )
+
+            if "gemini" in str(primary_model).lower():
                 api_key = (
                     nested.get("api_key")
                     or self.config.get("api_key")
@@ -80,19 +86,19 @@ class LLMAnalysisPlugin(Plugin):
                     or os.environ.get("DEEPSEEK_API_KEY", "")
                 )
 
-            # 获取Tavily API Key（可选，用于更精准的AI搜索）
             tavily_keys = []
             tavily_key = os.environ.get('TAVILY_API_KEY', '')
             if tavily_key:
                 tavily_keys = [k.strip() for k in tavily_key.split(',') if k.strip()]
-            
-            # 初始化增强版LLM分析器
-            self.analyzer = EnhancedLLMAnalyzer(api_key=api_key, model=model)
 
-            # 初始化搜索服务
+            self.analyzer = EnhancedLLMAnalyzer(
+                api_key=api_key,
+                model=primary_model,
+                fallback_model=fallback_model
+            )
             self.search_service = SearchService(tavily_keys=tavily_keys if tavily_keys else None)
 
-            logger.info(f"LLM 分析插件初始化成功（模型: {model}）")
+            logger.info(f"LLM 分析插件初始化成功（主模型: {primary_model}, 备用: {fallback_model}）")
             return True
         except Exception as e:
             logger.error(f"LLM 分析插件初始化失败: {e}")

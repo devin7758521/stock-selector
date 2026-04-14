@@ -76,16 +76,18 @@ class LLMNewsAnalyzer:
     支持 DeepSeek 和 Gemini 两大LLM进行新闻分析。
     """
 
-    def __init__(self, api_key: str, model: str = "deepseek"):
+    def __init__(self, api_key: str, model: str = "deepseek", fallback_model: Optional[str] = None):
         """
         初始化 LLM 新闻分析器
 
         Args:
             api_key: API 密钥
-            model: 模型名称，如 deepseek-chat、gemini-1.5-flash、gemini-2.0-flash 等
+            model: 主模型名称，如 deepseek-chat、gemini-1.5-flash 等
+            fallback_model: 备用模型名称，如 deepseek-reasoner 等
         """
         self.api_key = api_key
         self.model = model
+        self.fallback_model = fallback_model
         self.model_name = model
 
     def analyze(self, news_context: str, stock_name: str,
@@ -120,7 +122,7 @@ class LLMNewsAnalyzer:
                 result = self._analyze_with_gemini(news_context, stock_name, code, industry)
                 if not result.success or result.error_message:
                     if "429" in (result.error_message or "") or "503" in (result.error_message or "") or "quota" in (result.error_message or "").lower():
-                        logger.warning(f"Gemini API 失败 ({result.error_message})，自动切换到 DeepSeek")
+                        logger.warning(f"Gemini API 失败 ({result.error_message})，自动切换到 {self.fallback_model}")
                         return self._analyze_with_deepseek(news_context, stock_name, code, industry)
                 return result
             else:
@@ -166,9 +168,10 @@ class LLMNewsAnalyzer:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
-        model = self.model_name
+        model = self.fallback_model if self.fallback_model else self.model_name
         if model in ("deepseek", "local", ""):
             model = "deepseek-chat"
+        logger.info(f"使用 DeepSeek synthesize 模型: {model}")
         payload = {
             "model": model,
             "messages": [
@@ -267,7 +270,7 @@ class LLMNewsAnalyzer:
             "Authorization": f"Bearer {self.api_key}"
         }
 
-        model = self.model_name
+        model = self.fallback_model if self.fallback_model else self.model_name
         if model in ("deepseek", "local", ""):
             model = "deepseek-chat"
 
@@ -281,6 +284,7 @@ class LLMNewsAnalyzer:
             "max_tokens": 1000
         }
 
+        logger.info(f"使用 DeepSeek 模型: {model}")
         response = requests.post(
             DEEPSEEK_API_URL,
             headers=headers,
