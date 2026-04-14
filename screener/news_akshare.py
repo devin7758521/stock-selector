@@ -467,16 +467,12 @@ def _format_news_context(news_list: List[NewsResult], title: str) -> str:
     """格式化新闻列表为上下文字符串（含情感分类）"""
     if not news_list:
         return ""
-    lines = [f"【{title}】"]
     good = sum(1 for n in news_list if n.sentiment == "利好")
     bad = sum(1 for n in news_list if n.sentiment == "利空")
-    lines.append(f"📊 汇总: 利好{good} 利空{bad}")
+    lines = [f"【{title}】利好:{good} 利空:{bad}"]
     for i, news in enumerate(news_list, 1):
-        date_part = f" ({news.pub_date})" if news.pub_date else ""
         emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
-        lines.append(f"{i}. {emoji}【{news.sentiment}】【{news.source}】{news.title}{date_part}")
-        if news.content:
-            lines.append(f"   {news.content[:100]}...")
+        lines.append(f"{i}.{emoji}{news.title}")
     return "\n".join(lines)
 
 
