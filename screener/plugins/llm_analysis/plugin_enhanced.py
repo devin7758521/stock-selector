@@ -65,7 +65,8 @@ class LLMAnalysisPlugin(Plugin):
             primary_model = (
                 nested.get("primary_model")
                 or self.config.get("primary_model")
-                or os.environ.get("LLM_PRIMARY_MODEL", "gemini-2.0-flash")
+                or os.environ.get("LLM_PRIMARY_MODEL", "")
+                or os.environ.get("LLM_MODEL", "gemini-2.0-flash")
             )
             fallback_model = (
                 nested.get("fallback_model")

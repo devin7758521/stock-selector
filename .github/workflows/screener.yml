@@ -34,9 +34,10 @@ jobs:
           JQ_PASSWORD:       ${{ secrets.JQ_PASSWORD }}
           MAIRUI_TOKEN:      ${{ secrets.MAIRUI_TOKEN }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
           DEEPSEEK_API_KEY:  ${{ secrets.DEEPSEEK_API_KEY }}
           LLM_MODEL:         ${{ secrets.LLM_MODEL }}
-          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
+          LLM_FALLBACK_MODEL: ${{ secrets.LLM_FALLBACK_MODEL }}
           TAVILY_API_KEY:    ${{ secrets.TAVILY_API_KEY }}
         run: |
           python main.py
