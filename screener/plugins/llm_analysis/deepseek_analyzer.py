@@ -117,7 +117,12 @@ class LLMNewsAnalyzer:
 
         try:
             if "gemini" in self.model.lower():
-                return self._analyze_with_gemini(news_context, stock_name, code, industry)
+                result = self._analyze_with_gemini(news_context, stock_name, code, industry)
+                if not result.success or result.error_message:
+                    if "429" in (result.error_message or "") or "503" in (result.error_message or "") or "quota" in (result.error_message or "").lower():
+                        logger.warning(f"Gemini API 失败 ({result.error_message})，自动切换到 DeepSeek")
+                        return self._analyze_with_deepseek(news_context, stock_name, code, industry)
+                return result
             else:
                 return self._analyze_with_deepseek(news_context, stock_name, code, industry)
         except Exception as e:
@@ -144,7 +149,11 @@ class LLMNewsAnalyzer:
             return None
         try:
             if "gemini" in self.model.lower():
-                return self._synthesize_gemini(user_prompt, max_tokens)
+                result = self._synthesize_gemini(user_prompt, max_tokens)
+                if result is None:
+                    logger.warning("Gemini synthesize 失败，自动切换到 DeepSeek")
+                    return self._synthesize_deepseek(user_prompt, max_tokens)
+                return result
             return self._synthesize_deepseek(user_prompt, max_tokens)
         except Exception as e:
             logger.warning(f"LLM 综合推理异常: {e}", exc_info=True)
