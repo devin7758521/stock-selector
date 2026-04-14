@@ -316,14 +316,13 @@ def build_news_context(stock_code: str, stock_name: str = "",
     if akshare_results:
         news_list = akshare_results
     else:
-        fallback_results = search_stock_news_fallback(stock_code, stock_name, days, max_results)
-        if fallback_results:
-            news_list = fallback_results
-
-    if not news_list:
         tavily_results = search_tavily_stock_news(stock_name, stock_code, days, max_results)
         if tavily_results:
             news_list = tavily_results
+        else:
+            fallback_results = search_stock_news_fallback(stock_code, stock_name, days, max_results)
+            if fallback_results:
+                news_list = fallback_results
 
     if not news_list:
         return "", False
