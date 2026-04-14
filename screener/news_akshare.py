@@ -22,8 +22,37 @@ logger = logging.getLogger(__name__)
 AD_KEYWORDS = [
     '东方财富免费版', '东方财富Level-2', '东方财富策略', '广告', '免费',
     '妙想', '投研助理', 'Choice金融', 'Choice', '金融终端', 'Level-2',
-    '下载', '客户端', '电脑版', '手机版',
+    '下载', '客户端', '电脑版', '手机版', 'app', '软件', '推广',
+    'VIP', '付费', '订阅', '开户', '低佣', '万一',
 ]
+
+POSITIVE_KEYWORDS = [
+    '涨停', '大涨', '大幅上涨', '业绩增长', '营收增长', '净利润增长',
+    '突破', '创新高', '获批', '中标', '订单', '签约', '合作',
+    '增持', '回购', '分红', '送股', '扩产', '景气', '复苏',
+    '政策支持', '利好', '增长', '提升', '增长', '超预期',
+    '金叉', '买入', '推荐', '上调', '超配', '看多',
+]
+
+NEGATIVE_KEYWORDS = [
+    '跌停', '大跌', '大幅下跌', '业绩下降', '营收下降', '净利润下降',
+    '亏损', '预亏', '预警', '减持', '回购失败', '诉讼', '仲裁',
+    '政策利空', '监管', '调查', '整改', '处分', '风险提示',
+    '下调', '减持', '卖出', '看空', '风险', '暴雷', '造假',
+    '破发', '破净', 'st', '*st', '退市',
+]
+
+
+def _classify_sentiment(title: str, content: str = "") -> str:
+    """基于关键词分类情绪（利好/利空/中性）"""
+    text = (title + " " + content).lower()
+    pos_count = sum(1 for kw in POSITIVE_KEYWORDS if kw.lower() in text)
+    neg_count = sum(1 for kw in NEGATIVE_KEYWORDS if kw.lower() in text)
+    if pos_count > neg_count:
+        return "利好"
+    elif neg_count > pos_count:
+        return "利空"
+    return "中性"
 
 
 def _is_ad(title: str) -> bool:
@@ -67,6 +96,7 @@ class NewsResult:
         self.url = url
         self.source = source
         self.pub_date = pub_date
+        self.sentiment = _classify_sentiment(title, content)
 
     def __repr__(self):
         return f"<NewsResult {self.title[:20]}>"
@@ -171,13 +201,16 @@ def search_akshare_market_news(days: int = 3, max_results: int = 10) -> List[New
                     pub = str(row.get('发布时间', '')).strip()
                     if pub and not _parse_date(pub, days):
                         continue
-                    results.append(NewsResult(
+                    sentiment = _classify_sentiment(title, content)
+                    news_result = NewsResult(
                         title=title,
                         content=content[:300] if content else '',
                         url=url,
                         source="东方财富宏观",
                         pub_date=pub
-                    ))
+                    )
+                    news_result.sentiment = sentiment
+                    results.append(news_result)
                     count += 1
                 logger.info(f"AkShare 宏观新闻: 获取到 {len(results)} 条")
         except Exception as e:
@@ -216,12 +249,15 @@ def search_akshare_macro_news(days: int = 3, max_results: int = 5) -> List[NewsR
                         break
                     title = str(row.iloc[0])[:50] if len(row) > 0 else ''
                     content = str(row.to_dict())[:200]
-                    results.append(NewsResult(
+                    sentiment = _classify_sentiment(f"宏观数据: {title}", content)
+                    news_result = NewsResult(
                         title=f"宏观数据: {title}",
                         content=content,
                         source="AkShare宏观",
                         pub_date=""
-                    ))
+                    )
+                    news_result.sentiment = sentiment
+                    results.append(news_result)
                     count += 1
         except Exception as e:
             logger.debug(f"AkShare macro_china_money_supply 失败(可忽略): {e}")
@@ -328,11 +364,15 @@ def build_news_context(stock_code: str, stock_name: str = "",
         return "", False
 
     lines = [f"【{stock_name or stock_code} 新闻/公告】"]
+    good = sum(1 for n in news_list if n.sentiment == "利好")
+    bad = sum(1 for n in news_list if n.sentiment == "利空")
+    lines.append(f"📊 汇总: 利好{good} 利空{bad}")
     for i, news in enumerate(news_list, 1):
         date_part = f" ({news.pub_date})" if news.pub_date else ""
-        lines.append(f"{i}. 【{news.source}】{news.title}{date_part}")
+        emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
+        lines.append(f"{i}. {emoji}【{news.sentiment}】【{news.source}】{news.title}{date_part}")
         if news.content:
-            lines.append(f"   {news.content[:150]}...")
+            lines.append(f"   {news.content[:100]}...")
 
     return "\n".join(lines), True
 
@@ -397,15 +437,19 @@ def _search_macro_news_list(days: int, max_results: int) -> List[NewsResult]:
 
 
 def _format_news_context(news_list: List[NewsResult], title: str) -> str:
-    """格式化新闻列表为上下文字符串"""
+    """格式化新闻列表为上下文字符串（含情感分类）"""
     if not news_list:
         return ""
     lines = [f"【{title}】"]
+    good = sum(1 for n in news_list if n.sentiment == "利好")
+    bad = sum(1 for n in news_list if n.sentiment == "利空")
+    lines.append(f"📊 汇总: 利好{good} 利空{bad}")
     for i, news in enumerate(news_list, 1):
         date_part = f" ({news.pub_date})" if news.pub_date else ""
-        lines.append(f"{i}. 【{news.source}】{news.title}{date_part}")
+        emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
+        lines.append(f"{i}. {emoji}【{news.sentiment}】【{news.source}】{news.title}{date_part}")
         if news.content:
-            lines.append(f"   {news.content[:150]}...")
+            lines.append(f"   {news.content[:100]}...")
     return "\n".join(lines)
 
 
@@ -443,13 +487,18 @@ def search_tavily_stock_news(stock_name: str, stock_code: str = "",
         )
 
         for item in response.get("results", [])[:max_results]:
-            results.append(NewsResult(
-                title=item.get("title", "")[:200],
-                content=item.get("content", "")[:200],
+            title = item.get("title", "")[:200]
+            content = item.get("content", "")[:200]
+            sentiment = _classify_sentiment(title, content)
+            news_result = NewsResult(
+                title=title,
+                content=content,
                 url=item.get("url", ""),
                 source="Tavily",
                 pub_date=""
-            ))
+            )
+            news_result.sentiment = sentiment
+            results.append(news_result)
 
         if results:
             logger.info(f"Tavily 个股新闻({stock_name}): 获取到 {len(results)} 条")
@@ -476,7 +525,8 @@ def build_macro_context(days: int = 3, max_results: int = 5) -> tuple[str, bool]
     lines = ["【国内财经/宏观新闻】"]
     for i, news in enumerate(results, 1):
         date_part = f" ({news.pub_date})" if news.pub_date else ""
-        lines.append(f"{i}. {news.title}{date_part}")
+        sentiment_emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
+        lines.append(f"{i}. {sentiment_emoji}【{news.sentiment}】{news.title}{date_part}")
         if news.content:
             lines.append(f"   {news.content[:100]}...")
 
