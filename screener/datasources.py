@@ -71,23 +71,45 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
     except Exception as e:
         logger.debug(f"[spot/akshare] 失败: {e}")
 
-    # 2. 东方财富直接HTTP
+    # 2. 东方财富直接HTTP（分页获取全量）
     try:
+        import time
         url = "https://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            "pn": "1", "pz": "10000", "po": "1", "np": "1",
+        base_params = {
+            "po": "1", "np": "1",
             "ut": "bd1d9ddb04089700cf9c27f6f7426281",
             "fltt": "2", "invt": "2", "fid": "f3",
             "fs": "m:0+t:6,m:0+t:13,m:1+t:2,m:1+t:23",
             "fields": "f12,f2,f6",
         }
-        resp = requests.get(url, params=params, headers=random_headers(), timeout=15)
-        resp.raise_for_status()
-        items = resp.json().get("data", {}).get("diff", [])
-        if items:
+        all_items = []
+        page = 1
+        while True:
+            params = {**base_params, "pn": str(page), "pz": "5000"}
+            for retry in range(3):
+                try:
+                    resp = requests.get(url, params=params, headers=random_headers(), timeout=20)
+                    resp.raise_for_status()
+                    break
+                except Exception:
+                    if retry < 2:
+                        time.sleep(1)
+                    else:
+                        raise
+            data = resp.json().get("data", {})
+            items = data.get("diff", [])
+            if not items:
+                break
+            all_items.extend(items)
+            total = data.get("total", 0)
+            if len(all_items) >= total or len(items) < 5000:
+                break
+            page += 1
+            time.sleep(0.5)
+        if all_items:
             df = pd.DataFrame([{
                 "code": i["f12"], "price": i["f2"], "amount": i["f6"]
-            } for i in items])
+            } for i in all_items])
             df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
             df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
             df = df.dropna()
