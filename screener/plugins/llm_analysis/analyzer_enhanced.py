@@ -272,10 +272,10 @@ class EnhancedLLMAnalyzer:
         """计算LLM综合评分"""
         return (
             technical_score * 0.20 +
-            fundamental_score * 0.30 +
+            fundamental_score * 0.10 +
             news_score * 0.25 +
             policy_score * 0.15 +
-            market_score * 0.10
+            market_score * 0.30
         )
 
     def _extract_ai_score(self, ai_analysis: Optional[Dict]) -> int:
