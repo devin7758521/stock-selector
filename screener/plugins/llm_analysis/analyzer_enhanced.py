@@ -870,3 +870,92 @@ class EnhancedLLMAnalyzer:
             star_reason="分析异常，跳过评级",
             error_message=error_message
         )
+
+    def rank_stocks(self, stock_results: List[Dict], top_n: int = 10) -> List[Dict]:
+        """
+        对股票列表进行综合推理，筛选出最佳top_n只
+
+        Args:
+            stock_results: 股票分析结果列表
+            top_n: 返回数量，默认10只
+
+        Returns:
+            推理后的精选股票列表（已按推理分数重新排序）
+        """
+        if not stock_results:
+            return []
+        if len(stock_results) <= top_n:
+            return stock_results
+
+        logger.info(f"开始LLM综合推理筛选Top{top_n}...")
+
+        ranked_results = []
+        for i, r in enumerate(stock_results):
+            try:
+                stars = r.get("llm_stars", 0)
+                weighted_score = r.get("llm_weighted_score", r.get("weighted_score", 50))
+                technical_detail = r.get("technical_analysis_detail", "N/A")
+                fundamental_detail = r.get("fundamental_analysis_detail", "N/A")
+                news_detail = r.get("news_analysis_detail", "N/A")
+                policy_detail = r.get("policy_analysis_detail", "N/A")
+                market_detail = r.get("market_environment_analysis", "N/A")
+                news_headlines = r.get("news_headlines", "")
+                policy_info = r.get("policy_info", "")
+                macro_info = r.get("macro_info", "")
+                ai_analysis = r.get("ai_analysis")
+                stock_name = r.get("name", r.get("stock_name", "未知"))
+                code = r.get("code", "")
+
+                synthesis = self._get_llm_synthesis(
+                    stars, weighted_score,
+                    technical_detail, fundamental_detail,
+                    news_detail, policy_detail, market_detail,
+                    news_headlines, policy_info, macro_info,
+                    ai_analysis, stock_name
+                )
+
+                inference_score = self._parse_inference_score(synthesis, weighted_score, stars)
+                r["llm_inference_score"] = inference_score
+                r["llm_inference_reason"] = synthesis
+
+                logger.info(f"  [{i+1}/{len(stock_results)}] {stock_name} 推理评分: {inference_score:.1f}")
+                ranked_results.append(r)
+
+            except Exception as e:
+                logger.warning(f"股票 {r.get('name', code)} 推理失败: {e}")
+                r["llm_inference_score"] = r.get("llm_weighted_score", 50)
+                r["llm_inference_reason"] = ""
+                ranked_results.append(r)
+
+        ranked_results.sort(key=lambda x: x.get("llm_inference_score", 0), reverse=True)
+        logger.info(f"LLM综合推理筛选完成，Top{top_n}: {[r['name'] for r in ranked_results[:top_n]]}")
+
+        return ranked_results[:top_n]
+
+    def _parse_inference_score(self, synthesis: str, weighted_score: float, stars: int) -> float:
+        """
+        从LLM推理文本中解析出量化评分
+
+        推理评分 = 加权分×50% + 推理质量分×50%
+        推理质量分根据文本长度、逻辑完整性、是否有具体理由等评估
+        """
+        base_score = weighted_score
+
+        quality_bonus = 0.0
+        if synthesis:
+            synthesis_len = len(synthesis)
+            if synthesis_len > 100:
+                quality_bonus += 5
+            if "共振" in synthesis or "支撑" in synthesis:
+                quality_bonus += 3
+            if "关键" in synthesis or "核心" in synthesis or "主要" in synthesis:
+                quality_bonus += 2
+            if any(kw in synthesis for kw in ["突破", "放量", "金叉", "业绩", "政策"]):
+                quality_bonus += 3
+            if "建议" in synthesis:
+                quality_bonus += 2
+
+            quality_bonus = min(quality_bonus, 15)
+
+        inference_score = base_score * 0.5 + (base_score + quality_bonus) * 0.5
+        return min(100, inference_score)

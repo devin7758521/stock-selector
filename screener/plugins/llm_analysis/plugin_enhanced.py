@@ -313,9 +313,30 @@ class LLMAnalysisPlugin(Plugin):
             lines.append(f"\n【风险提示】\n{risk_warning}")
         
         lines.append("\n" + "=" * 80)
-        
+
         return "\n".join(lines)
-    
+
+    def rank_stocks(self, stock_results: List[Dict], top_n: int = 10) -> List[Dict]:
+        """
+        对股票列表进行LLM综合推理，筛选Top N
+
+        Args:
+            stock_results: 股票分析结果列表
+            top_n: 返回数量，默认10只
+
+        Returns:
+            推理后的精选列表
+        """
+        if not self.analyzer:
+            logger.warning("LLM分析器未初始化，无法进行推理筛选")
+            return stock_results[:top_n]
+
+        try:
+            return self.analyzer.rank_stocks(stock_results, top_n)
+        except Exception as e:
+            logger.error(f"LLM推理筛选失败: {e}")
+            return stock_results[:top_n]
+
     def _build_context(self, stock_data: Dict[str, Any], df: Any) -> Dict[str, Any]:
         """
         构建分析上下文

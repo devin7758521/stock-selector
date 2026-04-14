@@ -219,8 +219,23 @@ class StockSelector:
             reverse=True,
         )
 
+        # Step 5.5: LLM综合推理筛选Top10
+        logger.info("Step 5.5: LLM综合推理筛选Top 10...")
+        llm_plugin = self.plugin_manager.get_plugin('llm_analysis')
+        if llm_plugin and hasattr(llm_plugin, 'rank_stocks'):
+            try:
+                top10_results = llm_plugin.rank_stocks(sorted_results, top_n=10)
+                logger.info(f"LLM推理筛选完成，精选 {len(top10_results)} 只")
+                top10_results = top10_results[:10]
+            except Exception as e:
+                logger.warning(f"LLM推理筛选失败: {e}")
+                top10_results = sorted_results[:10]
+        else:
+            logger.warning("LLM插件不支持推理筛选，使用排序前10")
+            top10_results = sorted_results[:10]
+
         # Step 6: 飞书推送
         logger.info("Step 6: 推送飞书...")
-        send_feishu(sorted_results, self.config)
-        
-        return sorted_results
+        send_feishu(top10_results, self.config)
+
+        return top10_results
