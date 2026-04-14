@@ -392,26 +392,50 @@ class LLMAnalysisPlugin(Plugin):
     
     def _search_news(self, code: str, name: str) -> Optional[str]:
         """
-        搜索股票相关新闻，优先用 AkShare，失败则用 search_service 备用
+        搜索股票相关新闻，构建三类新闻上下文并汇总
 
         Args:
             code: 股票代码
             name: 股票名称
 
         Returns:
-            新闻上下文
+            汇总后的新闻上下文
         """
-        from screener.news_akshare import build_news_context
+        from screener.news_akshare import build_all_news_context
 
         try:
-            context, success = build_news_context(code, name, days=7, max_results=5)
-            if success and context:
-                logger.info(f"AkShare 新闻搜索成功: {name}({code})")
-                return context
-            else:
-                logger.warning(f"AkShare 新闻搜索返回空: {name}({code})")
+            stock_ctx, market_ctx, macro_ctx, success = build_all_news_context(
+                stock_code=code,
+                stock_name=name,
+                stock_days=7,
+                stock_max=5,
+                market_days=3,
+                market_max=10,
+                macro_days=3,
+                macro_max=5
+            )
+
+            if success and self.deepseek_analyzer:
+                summarized = self.deepseek_analyzer.summarize_news(stock_ctx, market_ctx, macro_ctx)
+                if summarized:
+                    logger.info(f"三类新闻汇总成功: {name}({code})")
+                    return summarized
+
+            raw_parts = []
+            if stock_ctx:
+                raw_parts.append(stock_ctx)
+            if market_ctx:
+                raw_parts.append(market_ctx)
+            if macro_ctx:
+                raw_parts.append(macro_ctx)
+
+            if raw_parts:
+                logger.info(f"三类新闻搜索成功(未汇总): {name}({code})")
+                return "\n\n".join(raw_parts)
+
+            logger.warning(f"三类新闻搜索返回空: {name}({code})")
         except Exception as e:
-            logger.warning(f"AkShare 新闻搜索异常: {name}({code}), {e}")
+            logger.warning(f"三类新闻搜索异常: {name}({code}), {e}")
 
         try:
             if self.search_service:

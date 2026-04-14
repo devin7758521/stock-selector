@@ -266,16 +266,39 @@ class EnhancedLLMAnalyzer:
             logger.error(f"分析失败: {e}", exc_info=True)
             return self._create_error_result(str(e))
 
-    def _calculate_llm_score(self, technical_score: int, fundamental_score: int,
-                            news_score: int, policy_score: int,
-                            market_score: int) -> float:
-        """计算LLM综合评分"""
+    def _calculate_llm_score(self, technical_score: Optional[int], fundamental_score: Optional[int],
+                            news_score: Optional[int], policy_score: Optional[int],
+                            market_score: Optional[int]) -> float:
+        """计算LLM综合评分，缺数据时重新分配权重"""
+        weights = {
+            "technical": 0.20,
+            "fundamental": 0.15,
+            "news": 0.30,
+            "policy": 0.15,
+            "market": 0.20,
+        }
+        scores = {
+            "technical": technical_score,
+            "fundamental": fundamental_score,
+            "news": news_score,
+            "policy": policy_score,
+            "market": market_score,
+        }
+        available = {k: v for k, v in scores.items() if v is not None}
+
+        if not available:
+            return 50.0
+
+        if len(available) < len(scores):
+            total_weight = sum(weights[k] for k in available)
+            return sum(available[k] * (weights[k] / total_weight) for k in available)
+
         return (
             technical_score * 0.20 +
-            fundamental_score * 0.10 +
-            news_score * 0.25 +
+            fundamental_score * 0.15 +
+            news_score * 0.30 +
             policy_score * 0.15 +
-            market_score * 0.30
+            market_score * 0.20
         )
 
     def _extract_ai_score(self, ai_analysis: Optional[Dict]) -> int:

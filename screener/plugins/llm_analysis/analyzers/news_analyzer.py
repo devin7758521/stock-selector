@@ -154,7 +154,7 @@ class NewsAnalyzer:
             Tuple[分析详情, 消息面评分, 新闻标题列表, 政策信息, 宏观信息]
         """
         if not news_context:
-            return f"暂无{stock_name}({code})相关新闻信息", 50, "", "", ""
+            return f"暂无{stock_name}({code})相关新闻信息", 0, "", "", ""
 
         details = []
         score = 50
