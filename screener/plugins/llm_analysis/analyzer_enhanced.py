@@ -220,13 +220,7 @@ class EnhancedLLMAnalyzer:
 
             stars = self._calculate_stars(weighted_score)
 
-            star_reason = self._generate_star_reason(
-                stock_name, stars, weighted_score, llm_base_score, ai_score, tech_score,
-                technical_detail, fundamental_detail, news_detail,
-                policy_detail, market_detail, news_headlines, policy_info, macro_info,
-                llm_news_reason,
-                ai_analysis=ai_analysis,
-            )
+            star_reason = f"{stock_name} 综合评分{weighted_score:.1f}分，{operation_advice}"
 
             analysis_summary = self._generate_summary(
                 stock_name, code, weighted_score, operation_advice,
