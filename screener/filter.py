@@ -20,8 +20,6 @@ from typing import Optional
 import pandas as pd
 
 from screener.calendar import resample_weekly, get_current_week_info
-from screener.datasources import fetch_spot_data
-from screener.utils.time_utils import is_market_open, is_trading_day, should_use_today_data
 
 logger = logging.getLogger("stock_selector.filter")
 
@@ -113,40 +111,7 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
 
     # ── 日K精确判断 ──────────────────────────────────────────
     latest_price = df_daily["close"].iloc[-1]
-    
-    # 判断是否使用实时成交额或当天数据
-    if is_market_open():
-        logger.debug("当前是开市时间，尝试使用实时成交额")
-        # 尝试获取实时快照数据
-        spot_df = fetch_spot_data(self.config)
-        if spot_df is not None:
-            # 从实时快照中获取成交额
-            code = df_daily.iloc[-1].get("code", "")
-            if code:
-                spot_row = spot_df[spot_df["code"] == code]
-                if not spot_row.empty:
-                    latest_daily_amount = spot_row.iloc[0]["amount"]
-                    logger.debug(f"使用实时成交额: {latest_daily_amount/1e8:.2f}亿")
-                else:
-                    # 实时快照中没有该股票，使用日K数据
-                    latest_daily_amount = df_daily["amount"].iloc[-1]
-                    logger.debug(f"实时快照中无该股票，使用日K成交额: {latest_daily_amount/1e8:.2f}亿")
-            else:
-                # 没有股票代码，使用日K数据
-                latest_daily_amount = df_daily["amount"].iloc[-1]
-                logger.debug(f"无股票代码，使用日K成交额: {latest_daily_amount/1e8:.2f}亿")
-        else:
-            # 实时快照获取失败，使用日K数据
-            latest_daily_amount = df_daily["amount"].iloc[-1]
-            logger.debug(f"实时快照获取失败，使用日K成交额: {latest_daily_amount/1e8:.2f}亿")
-    elif should_use_today_data():
-        # 下午三点以后，使用当天的日K数据
-        latest_daily_amount = df_daily["amount"].iloc[-1]
-        logger.debug(f"当前是交易日收盘后，使用当天日K成交额: {latest_daily_amount/1e8:.2f}亿")
-    else:
-        # 非交易日或非收盘后，使用前一天的日K数据
-        latest_daily_amount = df_daily["amount"].iloc[-1]
-        logger.debug(f"当前非开市时间，使用前一天日K成交额: {latest_daily_amount/1e8:.2f}亿")
+    latest_daily_amount = df_daily["amount"].iloc[-1]
 
     if not (price_min <= latest_price <= price_max):
         return None
