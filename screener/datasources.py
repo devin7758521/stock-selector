@@ -53,8 +53,16 @@ def _to_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
     """
     一次性获取全市场实时行情，返回 DataFrame(columns=["code","price","amount"])
+    交易时间：优先实时数据
+    非交易时间：使用最近交易日收盘数据
     失败返回 None，主流程会降级为逐只判断
     """
+    now = datetime.now()
+    is_trading_hour = (
+        now.weekday() < 5
+        and ((now.hour == 9 and now.minute >= 30) or (10 <= now.hour <= 14))
+    )
+
     # 1. akshare 东方财富实时行情
     try:
         import akshare as ak
@@ -73,7 +81,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
 
     # 2. 东方财富直接HTTP（分页获取全量）
     try:
-        import time
+        import time as _time
         url = "https://push2.eastmoney.com/api/qt/clist/get"
         base_params = {
             "po": "1", "np": "1",
@@ -93,7 +101,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
                     break
                 except Exception:
                     if retry < 2:
-                        time.sleep(1)
+                        _time.sleep(1)
                     else:
                         raise
             data = resp.json().get("data", {})
@@ -105,7 +113,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
             if len(all_items) >= total or len(items) < 5000:
                 break
             page += 1
-            time.sleep(0.5)
+            _time.sleep(0.5)
         if all_items:
             df = pd.DataFrame([{
                 "code": i["f12"], "price": i["f2"], "amount": i["f6"]
@@ -117,15 +125,116 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
                 logger.info(f"[spot/eastmoney] 实时快照: {len(df)} 只")
                 return df
     except Exception as e:
-        logger.warning(f"[spot/eastmoney] 失败: {e}")
+        logger.debug(f"[spot/eastmoney] 失败: {e}")
 
-    # 3. 备选方案：直接从日K数据中获取最新成交额
+    # 3. 新浪实时行情（非交易时间返回最近收盘价）
     try:
-        # 这里可以实现一个简单的备选方案，从日K数据中获取最新成交额
-        # 但考虑到性能问题，这里暂时跳过
-        logger.info("[spot/backup] 尝试从日K数据获取成交额")
+        import akshare as ak
+        try:
+            df = ak.stock_zh_a_spot()
+            if df is not None and not df.empty:
+                col_map = {}
+                for c in df.columns:
+                    if "代码" in c: col_map[c] = "code"
+                    elif "现价" in c or "最新" in c: col_map[c] = "price"
+                    elif "成交额" in c or "金额" in c: col_map[c] = "amount"
+                if "code" in col_map and "price" in col_map:
+                    df = df.rename(columns=col_map)[["code", "price", "amount"]]
+                    df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
+                    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+                    df = df.dropna()
+                    if not df.empty:
+                        logger.info(f"[spot/sina] 快照: {len(df)} 只")
+                        return df
+        except Exception:
+            pass
     except Exception as e:
-        logger.warning(f"[spot/backup] 失败: {e}")
+        logger.debug(f"[spot/sina] 失败: {e}")
+
+    # 4. 非交易时间：东方财富历史行情接口（返回最近收盘数据，无需逐只请求）
+    if not is_trading_hour:
+        try:
+            logger.info("[spot/hist] 非交易时间，尝试获取最近收盘数据")
+            url = "https://push2.eastmoney.com/api/qt/clist/get"
+            base_params = {
+                "po": "1", "np": "1",
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "fltt": "2", "invt": "2", "fid": "f3",
+                "fs": "m:0+t:6,m:0+t:13,m:1+t:2,m:1+t:23",
+                "fields": "f12,f2,f6",
+            }
+            all_items = []
+            page = 1
+            while True:
+                params = {**base_params, "pn": str(page), "pz": "5000"}
+                for retry in range(3):
+                    try:
+                        resp = requests.get(url, params=params, headers=random_headers(), timeout=20)
+                        resp.raise_for_status()
+                        break
+                    except Exception:
+                        if retry < 2:
+                            time.sleep(2)
+                        else:
+                            raise
+                data = resp.json().get("data", {})
+                items = data.get("diff", [])
+                if not items:
+                    break
+                all_items.extend(items)
+                total = data.get("total", 0)
+                if len(all_items) >= total or len(items) < 5000:
+                    break
+                page += 1
+                time.sleep(1)
+            if all_items:
+                df = pd.DataFrame([{
+                    "code": i["f12"], "price": i["f2"], "amount": i["f6"]
+                } for i in all_items])
+                df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
+                df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+                df = df.dropna()
+                if not df.empty:
+                    logger.info(f"[spot/hist] 最近收盘数据: {len(df)} 只")
+                    return df
+        except Exception as e:
+            logger.debug(f"[spot/hist] 失败: {e}")
+
+    # 5. 最后兜底：从股票列表+日K获取（仅取前200只，避免太慢）
+    try:
+        logger.info("[spot/kline] 兜底方案：批量获取日K最近收盘数据")
+        stock_list = fetch_stock_list(cfg)
+        if stock_list is not None and not stock_list.empty:
+            results = []
+            codes = stock_list["code"].tolist()[:200]
+            url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+            for code in codes:
+                try:
+                    secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
+                    params = {
+                        "secid": secid, "fields1": "f1,f2,f3",
+                        "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                        "klt": "101", "fqt": "1", "end": "20991231", "lmt": "3",
+                    }
+                    resp = requests.get(url, params=params, headers=random_headers(), timeout=5)
+                    klines = (resp.json().get("data") or {}).get("klines", [])
+                    if klines:
+                        last = klines[-1].split(",")
+                        results.append({
+                            "code": code,
+                            "price": float(last[2]),
+                            "amount": float(last[6]),
+                        })
+                except Exception:
+                    continue
+                if len(results) % 50 == 0:
+                    time.sleep(0.5)
+            if results:
+                df = pd.DataFrame(results)
+                logger.info(f"[spot/kline] 最近收盘数据: {len(df)} 只")
+                return df
+    except Exception as e:
+        logger.debug(f"[spot/kline] 失败: {e}")
 
     logger.warning("实时快照获取失败，跳过预筛，后续逐只判断价格/成交额")
     return None
