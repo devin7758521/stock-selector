@@ -115,13 +115,14 @@ def send_feishu_start(cfg: dict) -> bool:
         return False
 
 
-def send_feishu(results: List[Dict], cfg: dict) -> bool:
+def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Dict]] = None) -> bool:
     """
-    发送选股结果通知
+    发送选股结果通知（板块+Top10合并为一条消息）
 
     Args:
         results: 选股结果列表
         cfg: 完整 config dict
+        sector_results: 板块筛选结果（可选）
 
     Returns:
         是否推送成功
@@ -134,20 +135,38 @@ def send_feishu(results: List[Dict], cfg: dict) -> bool:
     today = datetime.today().strftime("%Y-%m-%d")
     feature_status = _get_feature_status(cfg)
 
+    content_lines = [
+        f"📊 选股播报 {today}",
+        ""
+    ]
+
+    if sector_results:
+        content_lines.append(f"🔥 强势板块（{len(sector_results)}个通过周K筛选）")
+        for i, s in enumerate(sector_results[:15], 1):
+            trend = s.get("sector_trend", "")
+            dev = s.get("vol_deviation_pct", 0)
+            amt = s.get("daily_amount_yi", 0)
+            trend_emoji = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
+            content_lines.append(f"  {i}.{trend_emoji}{s['name']}｜{trend}｜偏离{dev}%｜{amt}亿")
+        content_lines.append("")
+        content_lines.append("─" * 30)
+        content_lines.append("")
+
     if not results:
-        content = f"📊 选股播报 {today}\n\n今日无符合条件的标的。\n\n{feature_status}"
+        content_lines.append("今日无符合条件的个股标的。")
+        content_lines.append("")
+        content_lines.append(feature_status)
+        content = "\n".join(content_lines)
         payload = {
             "msg_type": "text",
             "content": {"text": content}
         }
     else:
         top_results = results[:10]
-        content_lines = [
-            f"📊 选股播报 {today}",
-            f"共 {len(results)} 只\n",
-            feature_status,
-            ""
-        ]
+        content_lines.append(f"⭐ Top {len(top_results)} 个股（共{len(results)}只入选）")
+        content_lines.append("")
+        content_lines.append(feature_status)
+        content_lines.append("")
 
         for i, r in enumerate(top_results, 1):
             stock_line = f"{i}. ▶ {r['name']}（{r['code']}）"
@@ -183,7 +202,6 @@ def send_feishu(results: List[Dict], cfg: dict) -> bool:
                 content_lines.append(f"  {label}: {s}")
 
             _one_line("llm_technical_detail", "技术", 200)
-            _one_line("llm_fundamental_detail", "基本面", 200)
             _one_line("llm_news_detail", "消息面", 180)
 
             if 'llm_news_success' in r:
@@ -229,13 +247,14 @@ def send_feishu(results: List[Dict], cfg: dict) -> bool:
         return False
 
 
-def send_feishu_card(results: List[Dict], cfg: dict) -> bool:
+def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[List[Dict]] = None) -> bool:
     """
-    发送飞书卡片消息（富文本格式）
+    发送飞书卡片消息（富文本格式），板块+Top10合并推送
 
     Args:
         results: 选股结果列表
         cfg: 完整 config dict
+        sector_results: 板块筛选结果（可选）
 
     Returns:
         是否推送成功
@@ -247,92 +266,165 @@ def send_feishu_card(results: List[Dict], cfg: dict) -> bool:
 
     today = datetime.today().strftime("%Y-%m-%d")
 
-    if not results:
-        content = f"📊 选股播报 {today}\n\n今日无符合条件的标的。"
-    else:
-        stock_elements = []
-        for r in results[:10]:
-            tags = []
-            if r.get('llm_stars') == 5:
-                tags.append({"tag": "el_tag", "text": "⭐五星", "color": "red"})
-            elif r.get('llm_stars') == 4:
-                tags.append({"tag": "el_tag", "text": "四星", "color": "orange"})
+    all_elements = []
 
-            name_elem = {
-                "tag": "text",
-                "text": f"{r['name']}（{r['code']}）"
+    header = {
+        "title": {"tag": "plain_text", "content": f"📊 选股播报 {today}"},
+        "template": "purple"
+    }
+    all_elements.append({"tag": "card", "card": {"header": header}})
+
+    feature_status_text = _get_feature_status(cfg).replace("\n", "\n\n")
+    all_elements.append({
+        "tag": "div",
+        "text": {
+            "tag": "lark_md",
+            "content": feature_status_text
+        }
+    })
+    all_elements.append({"tag": "hr"})
+
+    if sector_results:
+        sector_tag = {
+            "tag": "el_tag",
+            "text": f"🔥 强势板块 {len(sector_results)}个",
+            "color": "yellow"
+        }
+        all_elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**🔥 强势板块（{len(sector_results)}个通过周K筛选）**"
             }
+        })
 
-            price_elem = {
-                "tag": "text",
-                "text": f"价格: {r.get('price', 'N/A')} | 偏离: {r.get('vol_deviation_pct', 'N/A')}%"
-            }
-
-            signal = r.get('llm_operation_advice', r.get('ai_buy_signal', 'N/A'))
-            signal_elem = {
-                "tag": "text",
-                "text": f"建议: {signal}"
-            }
-
-            reason = r.get('llm_star_reason', '')
-            if reason:
-                reason = reason[:200] + "…" if len(reason) > 200 else reason
-                reason_elem = {
-                    "tag": "text",
-                    "text": f"理由: {reason}"
-                }
-            else:
-                reason_elem = None
-
-            news_info = ""
-            if r.get('llm_news_success') and r.get('llm_news_summary'):
-                news_info = f"\n📰 {r['llm_news_summary'][:100]}..."
-            news_elem = {
-                "tag": "text",
-                "text": news_info
-            } if news_info else None
-
-            line_elements = [name_elem, {"tag": "br"}, price_elem, {"tag": "br"}, signal_elem]
-            if reason_elem:
-                line_elements.extend([{"tag": "br"}, reason_elem])
-            if news_elem:
-                line_elements.extend([{"tag": "br"}, news_elem])
-
-            stock_elements.append({
+        sector_items = []
+        for s in sector_results[:15]:
+            trend = s.get("sector_trend", "")
+            dev = s.get("vol_deviation_pct", 0)
+            amt = s.get("daily_amount_yi", 0)
+            trend_icon = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
+            sector_items.append({
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "children": line_elements
+                    "content": f"{trend_icon} **{s['name']}**｜{trend}｜偏离{dev}%｜{amt}亿"
                 }
             })
 
-            if r != results[min(9, len(results) - 1)]:
-                stock_elements.append({
-                    "tag": "hr"
-                })
+        if sector_items:
+            all_elements.append({
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": ""},
+                "elements": sector_items
+            })
+        all_elements.append({"tag": "hr"})
 
-        header = {
-            "title": {"tag": "plain_text", "content": f"📊 选股播报 {today}  共{len(results)}只"},
-            "template": "purple"
-        }
-
-        payload = {
-            "msg_type": "interactive",
-            "card": {
-                "header": header,
-                "elements": [
-                    {
-                        "tag": "div",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": _get_feature_status(cfg)
-                        }
-                    },
-                    {"tag": "hr"},
-                    *stock_elements
-                ]
+    if not results:
+        all_elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": "**⭐ 今日无符合条件的个股标的。**"
             }
+        })
+    else:
+        top_results = results[:10]
+        all_elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"**⭐ Top {len(top_results)} 个股（共{len(results)}只入选）**"
+            }
+        })
+
+        for i, r in enumerate(top_results, 1):
+            stars = r.get('llm_stars', 0)
+            stars_str = "⭐" * stars if stars else ""
+
+            name_tag_color = "red" if stars == 5 else "orange" if stars == 4 else "blue" if stars == 3 else "grey"
+
+            stock_lines = [
+                f"**{i}. ▶ {r['name']}（{r['code']}）**"
+            ]
+
+            if 'price' in r:
+                stock_lines.append(f"价格: **{r['price']}**")
+            if 'vol_deviation_pct' in r:
+                stock_lines.append(f"偏离: **{r['vol_deviation_pct']}%**")
+            if 'ai_buy_signal' in r:
+                stock_lines.append(f"AI信号: {r['ai_buy_signal']}")
+            if stars:
+                stock_lines.append(f"LLM评级: **{stars}星** {stars_str}")
+            if 'llm_operation_advice' in r:
+                advice = r['llm_operation_advice']
+                advice_icon = "🟢" if "买入" in advice or "增持" in advice else "🔴" if "卖出" in advice or "减持" in advice else "🟡"
+                stock_lines.append(f"建议: {advice_icon} **{advice}**")
+
+            tech = r.get('llm_technical_detail', '')
+            if tech:
+                tech_brief = tech.replace("\n", " ").strip()[:150]
+                stock_lines.append(f"`技术`: {tech_brief}")
+
+            news_d = r.get('llm_news_detail', '')
+            if news_d:
+                news_brief = news_d.replace("\n", " ").strip()[:150]
+                stock_lines.append(f"`消息面`: {news_brief}")
+
+            if r.get('llm_news_success') and r.get('llm_news_summary'):
+                ns = str(r['llm_news_summary']).replace("\n", " ").strip()
+                lim = 280 if stars == 5 else 180
+                if len(ns) > lim:
+                    ns = ns[:lim - 1] + "…"
+                stock_lines.append(f"`📰摘要`: {ns}")
+            elif r.get('llm_news_success') == False:
+                stock_lines.append("`📰`: 未获取")
+
+            reason = r.get('llm_star_reason', '')
+            if reason:
+                reason_brief = reason.replace("\n", " ").strip()
+                lim = 800 if stars == 5 else 400
+                if len(reason_brief) > lim:
+                    reason_brief = reason_brief[:lim - 1] + "…"
+                stock_lines.append(f"`打星理由`: {reason_brief}")
+
+            content_text = "\n".join(stock_lines)
+
+            star_tag = None
+            if stars == 5:
+                star_tag = {"tag": "el_tag", "text": "⭐五星", "color": "red"}
+            elif stars == 4:
+                star_tag = {"tag": "el_tag", "text": "四星", "color": "orange"}
+            elif stars == 3:
+                star_tag = {"tag": "el_tag", "text": "三星", "color": "blue"}
+
+            title_parts = [f"**{i}. ▶ {r['name']}（{r['code']}）**"]
+            if star_tag:
+                title_parts.append(star_tag)
+
+            stock_div = {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": content_text
+                }
+            }
+
+            all_elements.append(stock_div)
+
+            if i < len(top_results):
+                all_elements.append({"tag": "hr"})
+
+    payload = {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📊 选股播报 {today}  共{len(results)}只"},
+                "template": "purple"
+            },
+            "elements": all_elements
         }
+    }
 
     try:
         resp = requests.post(webhook_url, json=payload, timeout=15)

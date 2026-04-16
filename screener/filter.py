@@ -153,21 +153,24 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
         # realtime 模式：含未完成周，量能按进度放大
         idx = -1
         if not is_week_complete and vol_scale > 1.0:
-            # 将当周成交量按进度放大，还原完整周估算值
+            # 成交量用 sqrt(scale)*0.8 放大（而非线性放大），减少噪声放大
+            # 数学推导：线性放大scale倍时噪声也被放大scale倍，但偏离度容忍只放宽sqrt(scale)倍
+            # 用sqrt(scale)*0.8放大volume：噪声放大sqrt(scale)*0.8倍，容忍放宽scale^(3/4)*0.8倍可覆盖
+            import math
+            vol_scale_adj = math.sqrt(vol_scale) * 0.8
             df_w = df_w.copy()
             df_w.loc[df_w.index[-1], "volume"] = (
-                df_w["volume"].iloc[-1] * vol_scale
+                df_w["volume"].iloc[-1] * vol_scale_adj
             )
             df_w.loc[df_w.index[-1], "amount"] = (
-                df_w["amount"].iloc[-1] * vol_scale
+                df_w["amount"].iloc[-1] * vol_scale_adj
             )
             logger.debug(
-                f"[realtime] 当周量放大 x{vol_scale:.2f}（交易日进度补偿）"
+                f"[realtime] 当周量放大 x{vol_scale_adj:.2f}（sqrt*0.8修正，原始scale={vol_scale:.2f}）"
             )
-            # 偏离度适当放宽：放大系数越大（周中越早），容忍范围越宽
-            # 用 sqrt(scale) 平衡：周一(scale≈5)放宽2.2倍，周四(scale≈1.25)放宽1.1倍
-            import math
-            tolerance = math.sqrt(vol_scale)
+            # 偏离度容忍放宽: scale^(3/4)*0.8，覆盖约1.2个std
+            # 周一: 5^0.75*0.8=2.67x, 周三: 1.67^0.75*0.8=1.20x, 周五: 1.00x
+            tolerance = vol_scale ** 0.75 * 0.8
             actual_dev_min = dev_min * tolerance
             actual_dev_max = dev_max * tolerance
             logger.debug(

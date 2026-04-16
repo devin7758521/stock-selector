@@ -25,7 +25,7 @@ def load_config(path: str = "config.yaml") -> dict:
         "ai_analysis": {"enabled": True},
         "stock_list_analysis": {"enabled": True},
         "technical_analysis": {"enabled": True},
-        "fundamental_analysis": {"enabled": True},
+        "fundamental_analysis": {"enabled": False},
     })
 
     # 环境变量覆盖（适配 GitHub Actions Secrets）

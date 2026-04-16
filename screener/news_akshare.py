@@ -464,7 +464,7 @@ def _search_macro_news_list(days: int, max_results: int) -> List[NewsResult]:
 
 
 def _format_news_context(news_list: List[NewsResult], title: str) -> str:
-    """格式化新闻列表为上下文字符串（含情感分类）"""
+    """格式化新闻列表为上下文字符串（含情感分类+简介）"""
     if not news_list:
         return ""
     good = sum(1 for n in news_list if n.sentiment == "利好")
@@ -472,7 +472,11 @@ def _format_news_context(news_list: List[NewsResult], title: str) -> str:
     lines = [f"【{title}】利好:{good} 利空:{bad}"]
     for i, news in enumerate(news_list, 1):
         emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
-        lines.append(f"{i}.{emoji}{news.title}")
+        if news.content and len(news.content) > 10:
+            brief = news.content[:60].replace("\n", " ").strip()
+            lines.append(f"{i}.{emoji}{news.title}｜{brief}")
+        else:
+            lines.append(f"{i}.{emoji}{news.title}")
     return "\n".join(lines)
 
 
@@ -536,7 +540,7 @@ def search_tavily_stock_news(stock_name: str, stock_code: str = "",
 
 def build_macro_context(days: int = 3, max_results: int = 5) -> tuple[str, bool]:
     """
-    构建宏观/市场环境上下文
+    构建宏观/市场环境上下文（简介式：标题+一句话影响解读）
 
     Returns:
         (context_str, success)
@@ -545,12 +549,62 @@ def build_macro_context(days: int = 3, max_results: int = 5) -> tuple[str, bool]
     if not results:
         return "", False
 
-    lines = ["【国内财经/宏观新闻】"]
+    good = sum(1 for n in results if n.sentiment == "利好")
+    bad = sum(1 for n in results if n.sentiment == "利空")
+
+    lines = [f"【宏观政策新闻】利好:{good} 利空:{bad}"]
+
     for i, news in enumerate(results, 1):
-        date_part = f" ({news.pub_date})" if news.pub_date else ""
-        sentiment_emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
-        lines.append(f"{i}. {sentiment_emoji}【{news.sentiment}】{news.title}{date_part}")
-        if news.content:
-            lines.append(f"   {news.content[:100]}...")
+        emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
+        impact = _brief_policy_impact(news.title, news.sentiment)
+        if news.content and len(news.content) > 10:
+            brief = news.content[:50].replace("\n", " ").strip()
+            lines.append(f"{i}.{emoji}{news.title}｜{impact}｜{brief}")
+        else:
+            lines.append(f"{i}.{emoji}{news.title}｜{impact}")
 
     return "\n".join(lines), True
+
+
+_POLICY_IMPACT_KEYWORDS = {
+    "降息": "流动性宽松，利好股市估值",
+    "降准": "释放流动性，利好市场",
+    "逆回购": "短期流动性投放",
+    "MLF": "中期流动性调节",
+    "LPR": "贷款利率调整",
+    "减税": "企业盈利改善",
+    "补贴": "相关行业受益",
+    "扶持": "政策支持行业",
+    "刺激": "经济刺激政策",
+    "扩内需": "消费相关受益",
+    "新基建": "基建链受益",
+    "新能源": "新能源产业链利好",
+    "半导体": "国产替代加速",
+    "芯片": "科技自主可控",
+    "房地产": "地产链政策变化",
+    "限产": "供给收缩，价格或上行",
+    "环保": "环保相关行业",
+    "注册制": "市场制度变革",
+    "退市": "优胜劣汰加速",
+    "监管": "行业监管趋严",
+    "反垄断": "平台经济受限",
+    "加息": "流动性收紧，利空估值",
+    "通胀": "货币政策或收紧",
+    "贸易战": "出口链承压",
+    "制裁": "相关企业受影响",
+    "衰退": "经济下行压力",
+    "违约": "信用风险上升",
+    "疫情": "经济活动受限",
+}
+
+
+def _brief_policy_impact(title: str, sentiment: str) -> str:
+    """根据标题关键词生成一句话政策影响解读"""
+    for kw, impact in _POLICY_IMPACT_KEYWORDS.items():
+        if kw in title:
+            return impact
+    if sentiment == "利好":
+        return "政策面偏暖"
+    elif sentiment == "利空":
+        return "政策面偏空"
+    return "影响待观察"

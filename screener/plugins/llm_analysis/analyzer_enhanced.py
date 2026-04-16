@@ -36,7 +36,6 @@ class AnalysisResult:
     star_reason: str
 
     technical_analysis_detail: str = ""
-    fundamental_analysis_detail: str = ""
     news_analysis_detail: str = ""
     policy_analysis_detail: str = ""
     market_environment_analysis: str = ""
@@ -62,10 +61,9 @@ class EnhancedLLMAnalyzer:
 
     分析维度：
     1. 技术面分析（MACD、KDJ、RSI、均线等）
-    2. 基本面分析（ROE、PE、PB、营收增长等）
-    3. 消息面分析（新闻、公告、市场情绪）
-    4. 政策面分析（国内外财经政策、行业政策）
-    5. 市场环境分析（大盘走势、板块轮动、资金流向）
+    2. 消息面分析（新闻、公告、市场情绪）
+    3. 政策面分析（国内外财经政策、行业政策）
+    4. 市场环境分析（大盘走势、板块轮动、资金流向）
 
     权重机制：
     - LLM综合评分：50%
@@ -78,7 +76,7 @@ class EnhancedLLMAnalyzer:
     # 可调：低于该加权分则为 0 星（无星）
     WEIGHTED_SCORE_ZERO_STAR_BELOW: float = 32.0
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "local", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = "local", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None, sector_results: Optional[List] = None):
         """
         初始化分析器
 
@@ -87,11 +85,13 @@ class EnhancedLLMAnalyzer:
             model: 使用的模型（local/gpt-4/claude/deepseek等）
             fallback_model: 备用模型（当主模型失败时自动切换）
             deepseek_api_key: DeepSeek 专用 API Key（用于 fallback）
+            sector_results: 板块筛选结果（用于板块联动分析）
         """
         self.api_key = api_key
         self.model = model
         self.fallback_model = fallback_model
         self.deepseek_api_key = deepseek_api_key
+        self.sector_results = sector_results or []
         self.model_used = f"Enhanced {model.upper()}" if model != "local" else "Enhanced Local Analyzer"
 
         self.llm_client = None
@@ -109,8 +109,7 @@ class EnhancedLLMAnalyzer:
 
     def analyze(self, context: Dict[str, Any], news_context: Optional[str],
                 ai_analysis: Optional[Dict] = None,
-                technical_analysis: Optional[Dict] = None,
-                fundamental_analysis: Optional[Dict] = None) -> AnalysisResult:
+                technical_analysis: Optional[Dict] = None) -> AnalysisResult:
         """
         综合分析股票数据
 
@@ -119,7 +118,6 @@ class EnhancedLLMAnalyzer:
             news_context: 新闻上下文
             ai_analysis: AI分析结果
             technical_analysis: 技术分析结果
-            fundamental_analysis: 基本面分析结果
 
         Returns:
             分析结果
@@ -127,7 +125,6 @@ class EnhancedLLMAnalyzer:
         try:
             from .analyzers import (
                 TechnicalAnalyzer,
-                FundamentalAnalyzer,
                 NewsAnalyzer,
                 PolicyAnalyzer,
                 MarketEnvironmentAnalyzer
@@ -140,17 +137,12 @@ class EnhancedLLMAnalyzer:
             logger.info(f"开始综合分析: {stock_name} ({code})")
 
             technical_analyzer = TechnicalAnalyzer()
-            fundamental_analyzer = FundamentalAnalyzer()
             news_analyzer = NewsAnalyzer()
             policy_analyzer = PolicyAnalyzer()
-            market_analyzer = MarketEnvironmentAnalyzer()
+            market_analyzer = MarketEnvironmentAnalyzer(sector_results=self.sector_results)
 
             technical_detail, technical_score = technical_analyzer.analyze(
                 technical_analysis, context
-            )
-
-            fundamental_detail, fundamental_score = fundamental_analyzer.analyze(
-                fundamental_analysis, context
             )
 
             news_detail, news_score, news_headlines, policy_info, macro_info = news_analyzer.analyze(
@@ -181,7 +173,7 @@ class EnhancedLLMAnalyzer:
             market_detail, market_score = market_analyzer.analyze(context)
 
             llm_base_score = self._calculate_llm_score(
-                technical_score, fundamental_score, news_score,
+                technical_score, news_score,
                 policy_score, market_score
             )
 
@@ -202,7 +194,6 @@ class EnhancedLLMAnalyzer:
                 stock_name,
                 code,
                 technical_detail,
-                fundamental_detail,
                 news_detail,
                 policy_detail,
                 market_detail,
@@ -212,11 +203,11 @@ class EnhancedLLMAnalyzer:
             )
 
             risk_warning = self._generate_risk_warning(
-                fundamental_score, policy_score, market_score
+                policy_score, market_score
             )
 
             buy_reason = self._generate_buy_reason(
-                weighted_score, technical_detail, fundamental_detail,
+                weighted_score, technical_detail,
                 news_detail, policy_detail
             )
 
@@ -243,7 +234,6 @@ class EnhancedLLMAnalyzer:
                 stars=stars,
                 star_reason=star_reason,
                 technical_analysis_detail=technical_detail,
-                fundamental_analysis_detail=fundamental_detail,
                 news_analysis_detail=news_detail,
                 policy_analysis_detail=policy_detail,
                 market_environment_analysis=market_detail,
@@ -262,20 +252,18 @@ class EnhancedLLMAnalyzer:
             logger.error(f"分析失败: {e}", exc_info=True)
             return self._create_error_result(str(e))
 
-    def _calculate_llm_score(self, technical_score: Optional[int], fundamental_score: Optional[int],
+    def _calculate_llm_score(self, technical_score: Optional[int],
                             news_score: Optional[int], policy_score: Optional[int],
                             market_score: Optional[int]) -> float:
-        """计算LLM综合评分，缺数据时重新分配权重"""
+        """计算LLM综合评分（不含基本面），缺数据时重新分配权重"""
         weights = {
-            "technical": 0.20,
-            "fundamental": 0.15,
-            "news": 0.30,
-            "policy": 0.15,
+            "technical": 0.25,
+            "news": 0.35,
+            "policy": 0.20,
             "market": 0.20,
         }
         scores = {
             "technical": technical_score,
-            "fundamental": fundamental_score,
             "news": news_score,
             "policy": policy_score,
             "market": market_score,
@@ -290,10 +278,9 @@ class EnhancedLLMAnalyzer:
             return sum(available[k] * (weights[k] / total_weight) for k in available)
 
         return (
-            technical_score * 0.20 +
-            fundamental_score * 0.15 +
-            news_score * 0.30 +
-            policy_score * 0.15 +
+            technical_score * 0.25 +
+            news_score * 0.35 +
+            policy_score * 0.20 +
             market_score * 0.20
         )
 
@@ -319,28 +306,7 @@ class EnhancedLLMAnalyzer:
         if '均线空头' in technical_detail:
             score -= 15
         return max(0, min(100, score))
-    
-    def _extract_fundamental_score(self, fundamental_detail: str) -> int:
-        """从基本面分析中提取评分"""
-        score = 50
-        if 'ROE优秀' in fundamental_detail:
-            score += 15
-        if 'PE估值偏低' in fundamental_detail or 'PE估值合理' in fundamental_detail:
-            score += 10
-        if 'PB估值较低' in fundamental_detail or 'PB估值合理' in fundamental_detail:
-            score += 8
-        if '营收高速增长' in fundamental_detail or '营收稳健增长' in fundamental_detail:
-            score += 12
-        if 'ROE较差' in fundamental_detail:
-            score -= 15
-        if 'PE估值偏高' in fundamental_detail:
-            score -= 10
-        if 'PB估值偏高' in fundamental_detail:
-            score -= 8
-        if '营收负增长' in fundamental_detail:
-            score -= 12
-        return max(0, min(100, score))
-    
+
     def _extract_news_score(self, news_detail: str) -> int:
         """从消息面分析中提取评分"""
         score = 50
@@ -396,7 +362,6 @@ class EnhancedLLMAnalyzer:
         stock_name: str,
         code: str,
         technical_detail: str,
-        fundamental_detail: str,
         news_detail: str,
         policy_detail: str,
         market_detail: str,
@@ -407,7 +372,6 @@ class EnhancedLLMAnalyzer:
         """内部留存用简要结论（微信等渠道不展示长篇推理，故不再单独请求 LLM 综述）。"""
         reasons = []
         reasons.extend(self._extract_technical_reason(technical_detail))
-        reasons.extend(self._extract_fundamental_reason(fundamental_detail))
         reasons.extend(self._extract_news_reason(news_detail))
         reasons.extend(self._extract_policy_reason(policy_detail))
         reasons.extend(self._extract_market_reason(market_detail))
@@ -428,17 +392,6 @@ class EnhancedLLMAnalyzer:
             reasons.append("技术面偏弱，短期承压")
         else:
             reasons.append("技术面中性")
-        return reasons
-
-    def _extract_fundamental_reason(self, fundamental_detail: str) -> List[str]:
-        """提取基本面推理"""
-        reasons = []
-        if '优秀' in fundamental_detail or '良好' in fundamental_detail:
-            reasons.append("基本面扎实，具有投资价值")
-        elif '较差' in fundamental_detail or '不足' in fundamental_detail:
-            reasons.append("基本面欠佳，存在业绩风险")
-        elif '无基本面数据' in fundamental_detail:
-            reasons.append("缺乏基本面数据支撑")
         return reasons
 
     def _extract_news_reason(self, news_detail: str) -> List[str]:
@@ -481,13 +434,10 @@ class EnhancedLLMAnalyzer:
         else:
             return f"综合评分{weighted_score:.1f}分，多维度分析显示消极信号，建议{operation_advice}。"
 
-    def _generate_risk_warning(self, fundamental_score: int,
-                              policy_score: int, market_score: int) -> str:
+    def _generate_risk_warning(self, policy_score: int,
+                              market_score: int) -> str:
         """生成风险警告"""
         warnings = []
-
-        if fundamental_score < 40:
-            warnings.append("基本面较差，存在业绩风险")
 
         if policy_score < 40:
             warnings.append("政策面不利，存在政策风险")
@@ -501,7 +451,7 @@ class EnhancedLLMAnalyzer:
         return "；".join(warnings)
 
     def _generate_buy_reason(self, weighted_score: float,
-                            technical_detail: str, fundamental_detail: str,
+                            technical_detail: str,
                             news_detail: str, policy_detail: str) -> str:
         """生成买入理由"""
         if weighted_score < 60:
@@ -511,9 +461,6 @@ class EnhancedLLMAnalyzer:
 
         if '看涨' in technical_detail or '金叉' in technical_detail:
             reasons.append("技术面出现买入信号")
-
-        if '优秀' in fundamental_detail or '良好' in fundamental_detail:
-            reasons.append("基本面表现良好")
 
         if '积极' in news_detail or '利好' in news_detail:
             reasons.append("消息面有利好因素")
@@ -538,7 +485,7 @@ class EnhancedLLMAnalyzer:
         return 1
 
     def _get_llm_synthesis(self, stars: int, weighted_score: float,
-                          technical_detail: str, fundamental_detail: str,
+                          technical_detail: str,
                           news_detail: str, policy_detail: str,
                           market_detail: str, news_headlines: str,
                           policy_info: str, macro_info: str,
@@ -549,7 +496,6 @@ class EnhancedLLMAnalyzer:
             return ""
 
         td = technical_detail if technical_detail and technical_detail != "N/A" else "暂无技术面数据"
-        fd = fundamental_detail if fundamental_detail and fundamental_detail != "N/A" else "暂无基本面数据"
         nd = news_detail if news_detail and news_detail != "N/A" else "暂无消息面数据"
         if news_headlines:
             nd = f"{nd}。新闻摘要：{news_headlines}"
@@ -614,7 +560,7 @@ class EnhancedLLMAnalyzer:
 
     def _generate_star_reason(self, stock_name: str, stars: int, weighted_score: float,
                              llm_score: float, ai_score: int, tech_score: int,
-                             technical_detail: str, fundamental_detail: str,
+                             technical_detail: str,
                              news_detail: str, policy_detail: str,
                              market_detail: str,
                              news_headlines: str = "",
@@ -625,7 +571,7 @@ class EnhancedLLMAnalyzer:
         """生成打星理由：五星须写清「凭什么五星」；不写权重公式与交叉验证等长篇推理。"""
 
         llm_synthesis = self._get_llm_synthesis(
-            stars, weighted_score, technical_detail, fundamental_detail,
+            stars, weighted_score, technical_detail,
             news_detail, policy_detail, market_detail, news_headlines,
             policy_info, macro_info, ai_analysis,
             stock_name=stock_name
@@ -646,26 +592,24 @@ class EnhancedLLMAnalyzer:
                 f"{weighted_score:.0f}分，内部模型口径），各维度要点如下："
             ]
             td = technical_detail if technical_detail and technical_detail != "N/A" else "暂无有效技术描述"
-            fd = fundamental_detail if fundamental_detail and fundamental_detail != "N/A" else "暂无有效基本面数据"
             lines.append(f"①技术：{self._clip(td, 200)}")
-            lines.append(f"②基本面：{self._clip(fd, 200)}")
             if llm_news_reason:
-                lines.append(f"③新闻解读（Gemini/LLM）：{self._clip(llm_news_reason, 220)}")
+                lines.append(f"②新闻解读（Gemini/LLM）：{self._clip(llm_news_reason, 220)}")
             else:
                 nd = news_detail if news_detail and news_detail != "N/A" else "消息面中性或信息不足"
                 nh = f" 标题摘要：{self._clip(news_headlines, 120)}" if news_headlines else ""
-                lines.append(f"③消息面：{self._clip(nd, 160)}{nh}")
+                lines.append(f"②消息面：{self._clip(nd, 160)}{nh}")
             pd = policy_detail if policy_detail and policy_detail != "N/A" else "政策面影响不明显"
-            lines.append(f"④政策：{self._clip(pd, 140)}")
+            lines.append(f"③政策：{self._clip(pd, 140)}")
             if policy_info:
                 lines.append(f"   政策关键词：{self._clip(policy_info, 120)}")
             md = market_detail if market_detail and market_detail != "N/A" else "市场环境一般"
-            lines.append(f"⑤市场流动性：{self._clip(md, 140)}")
+            lines.append(f"④市场流动性：{self._clip(md, 140)}")
             if macro_info:
-                lines.append(f"⑥宏观线索：{self._clip(macro_info, 160)}")
+                lines.append(f"⑤宏观线索：{self._clip(macro_info, 160)}")
             if ai_analysis:
                 lines.append(
-                    "⑦同步参考AI插件：信号="
+                    "⑥同步参考AI插件：信号="
                     f"{ai_analysis.get('ai_buy_signal', 'N/A')}，评分="
                     f"{ai_analysis.get('ai_signal_score', 'N/A')}。"
                 )
@@ -681,10 +625,6 @@ class EnhancedLLMAnalyzer:
             tech_reason = self._analyze_technical_reason(technical_detail)
             if tech_reason:
                 analysis_reasons.append(f"【技术面】{tech_reason}")
-        if fundamental_detail and fundamental_detail != "N/A":
-            fund_reason = self._analyze_fundamental_reason(fundamental_detail)
-            if fund_reason:
-                analysis_reasons.append(f"【基本面】{fund_reason}")
         if news_detail and news_detail != "N/A":
             news_reason = self._analyze_news_reason(news_detail, news_headlines)
             if news_reason:
@@ -711,39 +651,35 @@ class EnhancedLLMAnalyzer:
         else:
             reasons.extend(analysis_reasons)
         final_advice = self._generate_final_advice(
-            stars, weighted_score, technical_detail, fundamental_detail, news_detail, policy_detail
+            stars, weighted_score, technical_detail, news_detail, policy_detail
         )
         reasons.append(final_advice)
         return "；".join(reasons)
-    
-    def _generate_final_advice(self, stars: int, weighted_score: float, 
-                             technical_detail: str, fundamental_detail: str, 
+
+    def _generate_final_advice(self, stars: int, weighted_score: float,
+                             technical_detail: str,
                              news_detail: str, policy_detail: str) -> str:
-        """生成最终建议（根据个股情况）"""
+        """生成最终建议（根据个股情况，不含基本面）"""
         if stars <= 0:
             return (
-                "加权综合处于极低档，技术/基本面/情绪等至少一端明显偏弱，"
+                "加权综合处于极低档，技术/消息等至少一端明显偏弱，"
                 "不建议作为重点标的；若已持仓宜严控仓位。"
             )
         if stars >= 4:
             if '金叉' in technical_detail and '利好' in news_detail:
                 return "技术面与消息面共振，短期上涨概率大，建议积极买入"
-            elif 'ROE优秀' in fundamental_detail and '政策支持' in policy_detail:
-                return "基本面与政策面支撑强劲，长期价值凸显，建议长期持有"
+            elif '政策支持' in policy_detail:
+                return "政策面支撑强劲，建议积极关注"
             else:
                 return "综合各维度分析，当前具备较好投资价值，建议积极关注或买入"
         elif stars >= 3:
-            if '金叉' in technical_detail and '营收负增长' in fundamental_detail:
-                return "技术面向好但基本面存在隐患，建议短线操作"
-            elif 'ROE优秀' in fundamental_detail and '利空' in news_detail:
-                return "基本面扎实但消息面不利，建议逢低布局"
+            if '金叉' in technical_detail and '利空' in news_detail:
+                return "技术面向好但消息面存在隐患，建议短线操作"
             else:
                 return "综合各维度分析，当前中性偏多，建议持有或观望"
         else:
             if '死叉' in technical_detail or '空头' in technical_detail:
                 return "技术面走弱，建议观望或减仓"
-            elif 'ROE较差' in fundamental_detail or '营收负增长' in fundamental_detail:
-                return "基本面欠佳，建议回避"
             else:
                 return "综合各维度分析，当前风险较高，建议谨慎参与或观望"
     
@@ -774,37 +710,7 @@ class EnhancedLLMAnalyzer:
         if not reasons:
             return technical_detail
         return "；".join(reasons)
-    
-    def _analyze_fundamental_reason(self, fundamental_detail: str) -> str:
-        """分析基本面推理"""
-        reasons = []
-        
-        if 'ROE' in fundamental_detail:
-            if '高于行业平均' in fundamental_detail:
-                reasons.append("ROE高于行业平均，盈利能力较强")
-            elif '低于行业平均' in fundamental_detail:
-                reasons.append("ROE低于行业平均，盈利能力较弱")
-        
-        if 'PE' in fundamental_detail:
-            if '估值合理' in fundamental_detail:
-                reasons.append("PE估值合理，安全边际较高")
-            elif '估值偏高' in fundamental_detail:
-                reasons.append("PE估值偏高，存在调整风险")
-            elif '估值偏低' in fundamental_detail:
-                reasons.append("PE估值偏低，具有投资价值")
-        
-        if '营收增长' in fundamental_detail:
-            if '大幅增长' in fundamental_detail:
-                reasons.append("营收大幅增长，成长动能强劲")
-            elif '稳定增长' in fundamental_detail:
-                reasons.append("营收稳定增长，经营状况良好")
-            elif '负增长' in fundamental_detail:
-                reasons.append("营收负增长，成长动力不足")
-        
-        if not reasons:
-            return fundamental_detail
-        return "；".join(reasons)
-    
+
     def _analyze_news_reason(self, news_detail: str, news_headlines: str) -> str:
         """分析消息面推理"""
         reasons = []
@@ -908,7 +814,6 @@ class EnhancedLLMAnalyzer:
                 stars = r.get("llm_stars", 0)
                 weighted_score = r.get("llm_weighted_score", r.get("weighted_score", 50))
                 technical_detail = r.get("technical_analysis_detail", "N/A")
-                fundamental_detail = r.get("fundamental_analysis_detail", "N/A")
                 news_detail = r.get("news_analysis_detail", "N/A")
                 policy_detail = r.get("policy_analysis_detail", "N/A")
                 market_detail = r.get("market_environment_analysis", "N/A")
@@ -921,7 +826,7 @@ class EnhancedLLMAnalyzer:
 
                 synthesis = self._get_llm_synthesis(
                     stars, weighted_score,
-                    technical_detail, fundamental_detail,
+                    technical_detail,
                     news_detail, policy_detail, market_detail,
                     news_headlines, policy_info, macro_info,
                     ai_analysis, stock_name

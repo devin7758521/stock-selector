@@ -161,11 +161,8 @@ class PluginManager:
                     self.plugins[plugin_name] = plugin
                     return True
             elif plugin_name == "fundamental_analysis":
-                from screener.plugins.fundamental_analysis.plugin import FundamentalAnalysisPlugin
-                plugin = FundamentalAnalysisPlugin(plugin_name, config)
-                if plugin.initialize():
-                    self.plugins[plugin_name] = plugin
-                    return True
+                logger.info(f"插件 {plugin_name} 已禁用（基本面分析已移除）")
+                return False
             
             # 可以添加更多内置插件
             
@@ -178,15 +175,14 @@ class PluginManager:
         """
         获取所有激活的插件
         
-        执行顺序：技术面、基本面、AI 等先写入 stock_data，最后跑 llm_analysis，
-        否则 LLM 侧会一直看到「无技术指标/无基本面」且读不到 AI 评分。
+        执行顺序：技术面、AI 等先写入 stock_data，最后跑 llm_analysis，
+        否则 LLM 侧会一直看到「无技术指标」且读不到 AI 评分。
         
         Returns:
             激活的插件列表
         """
         priority = {
             "technical_analysis": 10,
-            "fundamental_analysis": 20,
             "ai_analysis": 30,
             "stock_list_analysis": 40,
             "llm_analysis": 100,

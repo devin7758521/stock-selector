@@ -70,36 +70,23 @@ class LLMConfig:
 @dataclass
 class AnalyzerConfig:
     """分析器通用配置"""
-    technical_weight: float = 0.20
-    fundamental_weight: float = 0.30
-    news_weight: float = 0.25
-    policy_weight: float = 0.15
-    market_weight: float = 0.10
+    technical_weight: float = 0.25
+    news_weight: float = 0.35
+    policy_weight: float = 0.20
+    market_weight: float = 0.20
 
     @classmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'AnalyzerConfig':
-        """
-        从字典创建配置对象
-
-        Args:
-            config: 配置字典
-
-        Returns:
-            AnalyzerConfig实例
-        """
         return cls(
-            technical_weight=config.get('technical_weight', 0.20),
-            fundamental_weight=config.get('fundamental_weight', 0.30),
-            news_weight=config.get('news_weight', 0.25),
-            policy_weight=config.get('policy_weight', 0.15),
-            market_weight=config.get('market_weight', 0.10)
+            technical_weight=config.get('technical_weight', 0.25),
+            news_weight=config.get('news_weight', 0.35),
+            policy_weight=config.get('policy_weight', 0.20),
+            market_weight=config.get('market_weight', 0.20)
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
         return {
             'technical_weight': self.technical_weight,
-            'fundamental_weight': self.fundamental_weight,
             'news_weight': self.news_weight,
             'policy_weight': self.policy_weight,
             'market_weight': self.market_weight

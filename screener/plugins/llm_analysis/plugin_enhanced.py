@@ -49,6 +49,7 @@ class LLMAnalysisPlugin(Plugin):
         super().__init__(name, config)
         self.analyzer = None
         self.search_service = None
+        self.sector_results = []
     
     def initialize(self) -> bool:
         """
@@ -109,7 +110,8 @@ class LLMAnalysisPlugin(Plugin):
                 api_key=api_key,
                 model=primary_model,
                 fallback_model=fallback_model,
-                deepseek_api_key=deepseek_api_key
+                deepseek_api_key=deepseek_api_key,
+                sector_results=self.sector_results
             )
             self.search_service = SearchService(tavily_keys=tavily_keys if tavily_keys else None)
 
@@ -164,15 +166,12 @@ class LLMAnalysisPlugin(Plugin):
                 if _ta_patch and _ta_patch.get("technical_analysis"):
                     technical_analysis = _ta_patch["technical_analysis"]
 
-            fundamental_analysis = stock_data.get("fundamental_analysis")
-            
             # 执行增强版LLM分析
             result = self.analyzer.analyze(
                 context=context,
                 news_context=news_context,
                 ai_analysis=ai_analysis,
-                technical_analysis=technical_analysis,
-                fundamental_analysis=fundamental_analysis
+                technical_analysis=technical_analysis
             )
             
             news_success = bool(news_context)
@@ -193,10 +192,9 @@ class LLMAnalysisPlugin(Plugin):
                 "llm_stars": result.stars,
                 "llm_star_reason": result.star_reason,
                 "llm_news_success": news_success,
-                
+
                 # 新增：详细分析维度
                 "llm_technical_detail": result.technical_analysis_detail,
-                "llm_fundamental_detail": result.fundamental_analysis_detail,
                 "llm_news_detail": result.news_analysis_detail,
                 "llm_policy_detail": result.policy_analysis_detail,
                 "llm_market_detail": result.market_environment_analysis,
@@ -227,7 +225,6 @@ class LLMAnalysisPlugin(Plugin):
                 "llm_stars": 0,
                 "llm_star_reason": "分析异常，跳过评级",
                 "llm_technical_detail": "N/A",
-                "llm_fundamental_detail": "N/A",
                 "llm_news_detail": "N/A",
                 "llm_policy_detail": "N/A",
                 "llm_market_detail": "N/A",
@@ -307,7 +304,6 @@ class LLMAnalysisPlugin(Plugin):
 
         for k, lab in (
             ("llm_technical_detail", "技术面摘要"),
-            ("llm_fundamental_detail", "基本面摘要"),
             ("llm_news_detail", "消息面摘要"),
         ):
             v = stock_data.get(k)
@@ -390,10 +386,6 @@ class LLMAnalysisPlugin(Plugin):
                 "ma20": float(df['ma20'].iloc[-1]),
                 "latest_price": float(df['close'].iloc[-1])
             }
-        
-        # 添加基本面分析数据
-        if 'fundamental_analysis' in stock_data:
-            context["fundamental"] = stock_data['fundamental_analysis']
         
         # 添加量能分析数据
         if 'vol_deviation_pct' in stock_data:

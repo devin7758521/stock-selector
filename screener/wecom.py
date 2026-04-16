@@ -152,7 +152,6 @@ def send_wecom(results: List[Dict], cfg: dict) -> bool:
                 content_lines.append(f"{label}: {s}")
 
             _one_line("llm_technical_detail", "技术", 180)
-            _one_line("llm_fundamental_detail", "基本面", 180)
             _one_line("llm_news_detail", "消息面", 160)
 
             if 'llm_news_success' in r:

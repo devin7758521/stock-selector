@@ -212,10 +212,6 @@ class LLMAnalysisPlugin(Plugin):
                 "latest_price": float(df['close'].iloc[-1])
             }
         
-        # 添加基本面分析数据
-        if 'fundamental_analysis' in stock_data:
-            context["fundamental"] = stock_data['fundamental_analysis']
-        
         # 添加量能分析数据
         if 'vol_deviation_pct' in stock_data:
             context["volume_analysis"] = {

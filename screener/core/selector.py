@@ -12,6 +12,7 @@ from tqdm import tqdm
 from screener.utils import load_config
 from screener.datasources import fetch_stock_list, fetch_daily_kline, fetch_spot_data
 from screener.filter import static_filter, calc_indicators, print_stats
+from screener.sector import filter_sector_weekly
 from screener.feishu import send_feishu, send_feishu_start
 from .plugin import PluginManager
 
@@ -60,7 +61,6 @@ class StockSelector:
         """
         初始化插件
         """
-        # 从配置中加载插件
         plugins_cfg = self.config.get("plugins", {})
         for plugin_name, plugin_config in plugins_cfg.items():
             if plugin_config.get("enabled", False):
@@ -69,6 +69,31 @@ class StockSelector:
                     logger.info(f"加载插件: {plugin_name}")
                 except Exception as e:
                     logger.warning(f"加载插件 {plugin_name} 失败: {e}")
+
+    def _load_or_filter_sectors(self):
+        """优先读取 sector_results.json，否则实时筛选板块"""
+        import json
+        import os
+        json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "sector_results.json")
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                sectors = data.get("sectors", [])
+                if sectors:
+                    from datetime import datetime
+                    saved_date = data.get("date", "")[:10]
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    if saved_date == today:
+                        logger.info(f"从 sector_results.json 加载 {len(sectors)} 个板块（{saved_date}）")
+                        return sectors
+                    else:
+                        logger.info(f"sector_results.json 日期{saved_date}非今日，重新筛选")
+            except Exception as e:
+                logger.debug(f"读取 sector_results.json 失败: {e}")
+
+        logger.info("实时筛选板块...")
+        return filter_sector_weekly(self.config)
     
     def process_stock(self, code: str, name: str) -> Optional[Dict]:
         """
@@ -139,6 +164,21 @@ class StockSelector:
         filtered_df = static_filter(stock_df, self.config, spot_df=spot_df)
         stock_list = list(zip(filtered_df["code"], filtered_df["name"]))
         logger.info(f"待下载行情的股票: {len(stock_list)} 只")
+        
+        # Step 3.5: 板块周K筛选
+        logger.info("Step 3.5: 板块周K筛选...")
+        self.sector_results = self._load_or_filter_sectors()
+        if self.sector_results:
+            sector_names = [s["name"] for s in self.sector_results[:10]]
+            logger.info(f"强势板块: {', '.join(sector_names)}")
+            llm_plugin = self.plugin_manager.get_plugin('llm_analysis')
+            if llm_plugin:
+                llm_plugin.sector_results = self.sector_results
+                if hasattr(llm_plugin, 'analyzer') and llm_plugin.analyzer:
+                    llm_plugin.analyzer.sector_results = self.sector_results
+                    logger.info(f"已将{len(self.sector_results)}个强势板块传递给LLM分析器")
+        else:
+            logger.warning("板块筛选无结果，后续板块联动权重为0")
         
         # Step 4: 并发下载 + 指标筛选
         logger.info(f"Step 4: 并发处理（线程数={max_workers}）...")
@@ -235,6 +275,7 @@ class StockSelector:
 
         # Step 6: 飞书推送
         logger.info("Step 6: 推送飞书...")
-        send_feishu(ranked_results, self.config)
+        sector_res = getattr(self, 'sector_results', None)
+        send_feishu_card(ranked_results, self.config, sector_results=sector_res)
 
         return ranked_results

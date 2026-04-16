@@ -42,4 +42,4 @@ plugins:
   technical_analysis:
     enabled: true
   fundamental_analysis:
-    enabled: true
+    enabled: false

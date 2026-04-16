@@ -9,13 +9,54 @@ Copyright (c) 2026 stock selector. All rights reserved.
 
 import logging
 import json
+import time
+import threading
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
 logger = logging.getLogger("stock_selector.llm.analyzer")
 
+_gemini_lock = threading.Lock()
+_gemini_last_call = 0.0
+_gemini_consecutive_429 = 0
+_GEMINI_MIN_INTERVAL = 4.0
+_GEMINI_MAX_INTERVAL = 30.0
+_GEMINI_429_THRESHOLD = 3
+
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+
+def _gemini_rate_limit_wait():
+    """Gemini 请求前等待，确保不超过频率限制"""
+    global _gemini_last_call, _gemini_consecutive_429
+    with _gemini_lock:
+        if _gemini_consecutive_429 >= _GEMINI_429_THRESHOLD:
+            logger.warning(f"Gemini 连续{_gemini_consecutive_429}次429，后续请求直接跳过使用DeepSeek")
+            return False
+        elapsed = time.time() - _gemini_last_call
+        interval = min(_GEMINI_MIN_INTERVAL * (1 + _gemini_consecutive_429 * 0.5), _GEMINI_MAX_INTERVAL)
+        if elapsed < interval:
+            wait = interval - elapsed
+            logger.debug(f"Gemini 限速等待 {wait:.1f}s")
+            time.sleep(wait)
+        _gemini_last_call = time.time()
+        return True
+
+
+def _gemini_record_429():
+    """记录 Gemini 429 错误"""
+    global _gemini_consecutive_429
+    with _gemini_lock:
+        _gemini_consecutive_429 += 1
+        logger.warning(f"Gemini 429累计: {_gemini_consecutive_429}次")
+
+
+def _gemini_record_success():
+    """记录 Gemini 成功调用，重置429计数"""
+    global _gemini_consecutive_429
+    with _gemini_lock:
+        _gemini_consecutive_429 = 0
 
 
 @dataclass
@@ -279,6 +320,9 @@ class LLMNewsAnalyzer:
         return f"{base}/{self.model_name}:generateContent"
 
     def _synthesize_gemini(self, user_prompt: str, max_tokens: int) -> Optional[str]:
+        if not _gemini_rate_limit_wait():
+            return None
+
         import requests
 
         url = f"{self._get_gemini_url()}?key={self.api_key}"
@@ -299,33 +343,48 @@ class LLMNewsAnalyzer:
                 "maxOutputTokens": max_tokens,
             },
         }
-        response = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json=payload,
-            timeout=45,
-        )
-        if response.status_code != 200:
-            logger.error(
-                f"Gemini 综合推理 API 失败: {response.status_code} - {response.text[:500]}"
-            )
-            return None
-        result = response.json()
-        candidates = result.get("candidates", [])
-        if not candidates:
-            logger.warning("Gemini 综合推理返回空 candidates")
-            return None
-        candidate = candidates[0]
-        if candidate.get("finishReason") == "SAFETY":
-            logger.warning("Gemini 综合推理因安全过滤被拦截")
-            return None
-        content = (
-            candidate.get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-        text = (content or "").strip()
-        return text if text else None
+
+        for retry in range(3):
+            try:
+                response = requests.post(
+                    url,
+                    headers={"Content-Type": "application/json"},
+                    json=payload,
+                    timeout=45,
+                )
+                if response.status_code == 429:
+                    _gemini_record_429()
+                    wait = min(4 * (2 ** retry), 30)
+                    logger.warning(f"Gemini synthesize 429，等待{wait}s后重试({retry+1}/3)")
+                    time.sleep(wait)
+                    continue
+                if response.status_code != 200:
+                    logger.error(f"Gemini 综合推理 API 失败: {response.status_code} - {response.text[:500]}")
+                    return None
+                _gemini_record_success()
+                result = response.json()
+                candidates = result.get("candidates", [])
+                if not candidates:
+                    return None
+                candidate = candidates[0]
+                if candidate.get("finishReason") == "SAFETY":
+                    return None
+                content = (
+                    candidate.get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", "")
+                )
+                text = (content or "").strip()
+                return text if text else None
+            except requests.exceptions.Timeout:
+                logger.warning(f"Gemini synthesize 超时，重试({retry+1}/3)")
+                if retry < 2:
+                    time.sleep(2)
+                continue
+            except Exception as e:
+                logger.error(f"Gemini synthesize 异常: {e}")
+                break
+        return None
 
     def _analyze_with_deepseek(self, news_context: str, stock_name: str,
                                code: str, industry: Optional[str]) -> LLMAnalysisResult:
@@ -406,6 +465,19 @@ class LLMNewsAnalyzer:
     def _analyze_with_gemini(self, news_context: str, stock_name: str,
                              code: str, industry: Optional[str]) -> LLMAnalysisResult:
         """使用 Gemini 分析"""
+        if not _gemini_rate_limit_wait():
+            return LLMAnalysisResult(
+                sentiment_score=50,
+                sentiment_reason="Gemini限流，跳过",
+                key_events=[],
+                policy_impact="无法分析",
+                macro_impact="无法分析",
+                investment_suggestion="观望",
+                confidence="低",
+                success=False,
+                error_message="Gemini 429限流"
+            )
+
         import requests
 
         industry_context = f"，所属行业：{industry}" if industry else ""
@@ -438,56 +510,83 @@ class LLMNewsAnalyzer:
             "Content-Type": "application/json"
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        for retry in range(3):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=30)
 
-        if response.status_code != 200:
-            logger.error(f"Gemini API 请求失败: {response.status_code} - {response.text}")
-            return LLMAnalysisResult(
-                sentiment_score=50,
-                sentiment_reason="API请求失败",
-                key_events=[],
-                policy_impact="无法分析",
-                macro_impact="无法分析",
-                investment_suggestion="观望",
-                confidence="低",
-                success=False,
-                error_message=f"API错误: {response.status_code}"
-            )
+                if response.status_code == 429:
+                    _gemini_record_429()
+                    wait = min(4 * (2 ** retry), 30)
+                    logger.warning(f"Gemini 429，等待{wait}s后重试({retry+1}/3)")
+                    time.sleep(wait)
+                    continue
 
-        result = response.json()
-        candidates = result.get("candidates", [])
-        if not candidates:
-            logger.warning(f"Gemini 分析返回空 candidates: {stock_name} ({code})")
-            return LLMAnalysisResult(
-                sentiment_score=50,
-                sentiment_reason="Gemini 返回空结果",
-                key_events=[],
-                policy_impact="无法分析",
-                macro_impact="无法分析",
-                investment_suggestion="观望",
-                confidence="低",
-                success=False,
-                error_message="Gemini 返回空 candidates"
-            )
-        candidate = candidates[0]
-        if candidate.get("finishReason") == "SAFETY":
-            logger.warning(f"Gemini 分析因安全过滤被拦截: {stock_name} ({code})")
-            return LLMAnalysisResult(
-                sentiment_score=50,
-                sentiment_reason="内容被安全过滤拦截",
-                key_events=[],
-                policy_impact="无法分析",
-                macro_impact="无法分析",
-                investment_suggestion="观望",
-                confidence="低",
-                success=False,
-                error_message="Gemini 安全过滤拦截"
-            )
-        content = candidate.get("content", {}).get("parts", [{}])[0].get("text", "")
+                if response.status_code != 200:
+                    logger.error(f"Gemini API 请求失败: {response.status_code} - {response.text[:500]}")
+                    return LLMAnalysisResult(
+                        sentiment_score=50,
+                        sentiment_reason="API请求失败",
+                        key_events=[],
+                        policy_impact="无法分析",
+                        macro_impact="无法分析",
+                        investment_suggestion="观望",
+                        confidence="低",
+                        success=False,
+                        error_message=f"API错误: {response.status_code}"
+                    )
 
-        logger.info(f"Gemini 分析成功: {stock_name} ({code})")
+                _gemini_record_success()
+                result = response.json()
+                candidates = result.get("candidates", [])
+                if not candidates:
+                    return LLMAnalysisResult(
+                        sentiment_score=50,
+                        sentiment_reason="Gemini 返回空结果",
+                        key_events=[],
+                        policy_impact="无法分析",
+                        macro_impact="无法分析",
+                        investment_suggestion="观望",
+                        confidence="低",
+                        success=False,
+                        error_message="Gemini 返回空 candidates"
+                    )
+                candidate = candidates[0]
+                if candidate.get("finishReason") == "SAFETY":
+                    return LLMAnalysisResult(
+                        sentiment_score=50,
+                        sentiment_reason="内容被安全过滤拦截",
+                        key_events=[],
+                        policy_impact="无法分析",
+                        macro_impact="无法分析",
+                        investment_suggestion="观望",
+                        confidence="低",
+                        success=False,
+                        error_message="Gemini 安全过滤拦截"
+                    )
+                content = candidate.get("content", {}).get("parts", [{}])[0].get("text", "")
+                logger.info(f"Gemini 分析成功: {stock_name} ({code})")
+                return self._parse_response(content)
 
-        return self._parse_response(content)
+            except requests.exceptions.Timeout:
+                logger.warning(f"Gemini 超时，重试({retry+1}/3)")
+                if retry < 2:
+                    time.sleep(2)
+                continue
+            except Exception as e:
+                logger.error(f"Gemini 异常: {e}")
+                break
+
+        return LLMAnalysisResult(
+            sentiment_score=50,
+            sentiment_reason="Gemini重试耗尽",
+            key_events=[],
+            policy_impact="无法分析",
+            macro_impact="无法分析",
+            investment_suggestion="观望",
+            confidence="低",
+            success=False,
+            error_message="Gemini重试耗尽"
+        )
 
     def _parse_response(self, content: str) -> LLMAnalysisResult:
         """解析 LLM 返回的内容"""
