@@ -34,8 +34,6 @@ def run(config_path: str = "config.yaml"):
     logger.info("=" * 55)
     logger.info("  板块周K筛选启动")
     logger.info("=" * 55)
-
-    send_feishu_start(cfg)
     sectors = filter_sector_weekly(cfg)
 
     if sectors:
