@@ -1,15 +1,13 @@
 name: stock selector 选股
 
 on:
-  workflow_dispatch:   # 手动触发
-  # 如需定时，取消下面注释（北京时间每周五16:00，即UTC 08:00）
-  # schedule:
-  #   - cron: "0 8 * * 5"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1-5"
 
 jobs:
-  screen:
+  sector:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,20 +22,48 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 说明：未提交 config.yaml 时 load_config 会用内置默认；LLM 用 Gemini 时请设 Secrets：
-      #   GEMINI_API_KEY + LLM_MODEL=gemini-2.5-flash（或你在 AI Studio 中的模型 ID）
-      - name: Run screener
+      - name: Run sector screener
         env:
           TZ: Asia/Shanghai
-          TUSHARE_TOKEN:     ${{ secrets.TUSHARE_TOKEN }}
-          JQ_USERNAME:       ${{ secrets.JQ_USERNAME }}
-          JQ_PASSWORD:       ${{ secrets.JQ_PASSWORD }}
-          MAIRUI_TOKEN:      ${{ secrets.MAIRUI_TOKEN }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
-          DEEPSEEK_API_KEY:  ${{ secrets.DEEPSEEK_API_KEY }}
-          LLM_MODEL:         ${{ secrets.LLM_MODEL }}
+        run: |
+          python run_sector.py
+
+      - name: Upload sector results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sector-results
+          path: sector_results.json
+          retention-days: 1
+
+  stock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run stock screener
+        env:
+          TZ: Asia/Shanghai
+          TUSHARE_TOKEN:      ${{ secrets.TUSHARE_TOKEN }}
+          JQ_USERNAME:        ${{ secrets.JQ_USERNAME }}
+          JQ_PASSWORD:        ${{ secrets.JQ_PASSWORD }}
+          MAIRUI_TOKEN:       ${{ secrets.MAIRUI_TOKEN }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY:   ${{ secrets.DEEPSEEK_API_KEY }}
+          LLM_MODEL:          ${{ secrets.LLM_MODEL }}
           LLM_FALLBACK_MODEL: ${{ secrets.LLM_FALLBACK_MODEL }}
-          TAVILY_API_KEY:    ${{ secrets.TAVILY_API_KEY }}
+          TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
         run: |
           python main.py
