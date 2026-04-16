@@ -115,6 +115,54 @@ def send_feishu_start(cfg: dict) -> bool:
         return False
 
 
+def send_feishu_sector(sectors: List[Dict], cfg: dict) -> bool:
+    """
+    发送板块筛选结果通知
+
+    Args:
+        sectors: 板块筛选结果列表
+        cfg: 完整 config dict
+
+    Returns:
+        是否推送成功
+    """
+    webhook_url = cfg.get("feishu", {}).get("webhook_url", "").strip()
+    if not webhook_url:
+        logger.warning("未配置飞书 webhook_url，跳过推送")
+        return False
+
+    today = datetime.today().strftime("%Y-%m-%d")
+
+    content_lines = [
+        f"📊 板块播报 {today}",
+        ""
+    ]
+
+    if not sectors:
+        content_lines.append("今日无符合条件的强势板块。")
+    else:
+        content_lines.append(f"🔥 强势板块（{len(sectors)}个通过周K筛选）")
+        for i, s in enumerate(sectors[:15], 1):
+            trend = s.get("sector_trend", "")
+            dev = s.get("vol_deviation_pct", 0)
+            amt = s.get("daily_amount_yi", 0)
+            trend_emoji = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
+            content_lines.append(f"  {i}. {trend_emoji} {s['name']}｜{trend}｜偏离{dev}%｜{amt}亿")
+
+    message = "\n".join(content_lines)
+    payload = {"msg_type": "text", "content": {"text": message}}
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logger.info(f"[feishu] 板块播报推送成功，共 {len(sectors)} 个板块")
+            return True
+        else:
+            logger.warning(f"[feishu] 推送失败: {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"[feishu] 推送异常: {e}")
+    return False
+
+
 def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Dict]] = None) -> bool:
     """
     发送选股结果通知（板块+Top10合并为一条消息）

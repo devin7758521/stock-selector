@@ -22,7 +22,7 @@ logging.basicConfig(
 
 from screener.utils import load_config
 from screener.sector import filter_sector_weekly
-from screener.feishu import send_feishu, send_feishu_start
+from screener.feishu import send_feishu_sector
 
 logger = logging.getLogger("stock_selector.run_sector")
 
@@ -36,7 +36,6 @@ def run(config_path: str = "config.yaml"):
     logger.info("=" * 55)
 
     send_feishu_start(cfg)
-
     sectors = filter_sector_weekly(cfg)
 
     if sectors:
@@ -56,7 +55,7 @@ def run(config_path: str = "config.yaml"):
                 "sectors": [],
             }, f, ensure_ascii=False, indent=2)
 
-    send_feishu(sectors, cfg)
+    send_feishu_sector(sectors, cfg)
     return sectors
 
 
