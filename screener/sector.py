@@ -143,8 +143,8 @@ def filter_sector_weekly(cfg: dict) -> List[Dict]:
             df_w = df_w.copy()
             import math
             vol_scale_adj = math.sqrt(vol_scale) * 0.8
-            df_w.loc[df_w.index[-1], "volume"] = df_w["volume"].iloc[-1] * vol_scale_adj
-            df_w.loc[df_w.index[-1], "amount"] = df_w["amount"].iloc[-1] * vol_scale_adj
+            df_w.loc[df_w.index[-1], "volume"] = int(df_w["volume"].iloc[-1] * vol_scale_adj)
+            df_w.loc[df_w.index[-1], "amount"] = int(df_w["amount"].iloc[-1] * vol_scale_adj)
             tolerance = vol_scale ** 0.75 * 0.8
             actual_dev_min = dev_min * tolerance
             actual_dev_max = dev_max * tolerance
