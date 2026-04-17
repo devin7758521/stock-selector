@@ -365,12 +365,6 @@ def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[Li
 
     all_elements = []
 
-    header = {
-        "title": {"tag": "plain_text", "content": f"📊 选股播报 {today}"},
-        "template": "purple"
-    }
-    all_elements.append({"tag": "card", "card": {"header": header}})
-
     feature_status_text = _get_feature_status(cfg).replace("\n", "\n\n")
     all_elements.append({
         "tag": "div",
