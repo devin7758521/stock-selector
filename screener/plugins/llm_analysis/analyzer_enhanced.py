@@ -3,7 +3,7 @@
 增强版 LLM 分析器模块
 
 功能：
-1. 多维度综合分析（技术面、基本面、消息面、政策面）
+1. 多维度综合分析（技术面、消息面、政策面）
 2. 权重机制：LLM > AI > 技术指标
 3. 国内外财经政治形势分析
 4. 详细的推理过程和打星理由
@@ -327,8 +327,8 @@ class EnhancedLLMAnalyzer:
 
     def _calculate_weighted_score(self, llm_score: float, ai_score: int,
                                  tech_score: int) -> float:
-        """计算加权总分：LLM综合评分70% + AI评分30%"""
-        return llm_score * 0.7 + ai_score * 0.3
+        """计算加权总分：LLM 50% + AI 30% + 技术指标 20%"""
+        return llm_score * 0.5 + ai_score * 0.3 + tech_score * 0.2
 
     def _generate_operation_advice(self, weighted_score: float) -> tuple:
         """生成操作建议"""
@@ -474,13 +474,13 @@ class EnhancedLLMAnalyzer:
         """计算星级 0～5（0 为无星：加权综合过低）。"""
         if weighted_score < self.WEIGHTED_SCORE_ZERO_STAR_BELOW:
             return 0
-        if weighted_score >= 85:
+        if weighted_score >= 80:
             return 5
-        if weighted_score >= 75:
+        if weighted_score >= 68:
             return 4
-        if weighted_score >= 60:
+        if weighted_score >= 55:
             return 3
-        if weighted_score >= 45:
+        if weighted_score >= 42:
             return 2
         return 1
 
@@ -520,9 +520,6 @@ class EnhancedLLMAnalyzer:
 
 【技术面分析】
 {td}
-
-【基本面分析】
-{fd}
 
 【消息面分析】
 {nd}
