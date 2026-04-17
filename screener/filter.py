@@ -28,6 +28,7 @@ _lock = threading.Lock()
 _stats = {
     "total": 0, "pass_price": 0, "pass_amount": 0,
     "pass_weeks": 0, "pass_ma25": 0, "pass_vol_up": 0, "pass_dev": 0,
+    "pass_macd": 0,
 }
 
 
@@ -41,7 +42,8 @@ def print_stats():
         logger.info(f"  周K数据足够    : {_stats['pass_weeks']:>5} 只")
         logger.info(f"  站上25周均线    : {_stats['pass_ma25']:>5} 只")
         logger.info(f"  5周量均线向上   : {_stats['pass_vol_up']:>5} 只")
-        logger.info(f"  偏离度通过      : {_stats['pass_dev']:>5} 只  ← 最终入选")
+        logger.info(f"  偏离度通过      : {_stats['pass_dev']:>5} 只")
+        logger.info(f"  周K MACD通过    : {_stats['pass_macd']:>5} 只  ← 最终入选")
         logger.info("=" * 55)
 
 
@@ -215,6 +217,20 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
         return None
     with _lock:
         _stats["pass_dev"] += 1
+
+    # ── 条件：周K MACD DIF > DEA 且偏离值不超过10% ───────────
+    ema12 = close_w.ewm(span=12, adjust=False).mean()
+    ema26 = close_w.ewm(span=26, adjust=False).mean()
+    dif   = ema12 - ema26
+    dea   = dif.ewm(span=9, adjust=False).mean()
+    dif_val, dea_val = float(dif.iloc[idx]), float(dea.iloc[idx])
+    if pd.isna(dif_val) or pd.isna(dea_val) or dif_val <= dea_val:
+        return None
+    dea_abs = abs(dea_val)
+    if dea_abs > 1e-9 and (dif_val - dea_val) / dea_abs > 0.10:
+        return None
+    with _lock:
+        _stats["pass_macd"] += 1
 
     return {
         "price":             round(latest_price, 2),
