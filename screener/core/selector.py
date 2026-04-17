@@ -13,7 +13,7 @@ from screener.utils import load_config
 from screener.datasources import fetch_stock_list, fetch_daily_kline, fetch_spot_data
 from screener.filter import static_filter, calc_indicators, print_stats
 from screener.sector import filter_sector_weekly
-from screener.feishu import send_feishu, send_feishu_start
+from screener.feishu import send_feishu, send_feishu_card, send_feishu_start
 from .plugin import PluginManager
 
 logger = logging.getLogger("stock_selector.selector")
