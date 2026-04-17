@@ -163,6 +163,55 @@ def send_feishu_sector(sectors: List[Dict], cfg: dict) -> bool:
     return False
 
 
+def send_feishu_etf(etfs: List[Dict], cfg: dict) -> bool:
+    """
+    发送ETF筛选结果通知
+
+    Args:
+        etfs: ETF筛选结果列表
+        cfg: 完整 config dict
+
+    Returns:
+        是否推送成功
+    """
+    webhook_url = cfg.get("feishu", {}).get("webhook_url", "").strip()
+    if not webhook_url:
+        logger.warning("未配置飞书 webhook_url，跳过推送")
+        return False
+
+    today = datetime.today().strftime("%Y-%m-%d")
+
+    content_lines = [
+        f"📊 ETF播报 {today}",
+        ""
+    ]
+
+    if not etfs:
+        content_lines.append("今日无符合条件的强势ETF。")
+    else:
+        content_lines.append(f"🔥 强势ETF（{len(etfs)}只通过周K筛选）")
+        for i, e in enumerate(etfs[:15], 1):
+            trend = e.get("etf_trend", "")
+            dev = e.get("vol_deviation_pct", 0)
+            amt = e.get("daily_amount_yi", 0)
+            idx_name = e.get("index_name", "")
+            trend_icon = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
+            content_lines.append(f"  {i}. {trend_icon} {e['name']}({e['code']})｜{idx_name}｜{trend}｜偏离{dev}%｜{amt}亿")
+
+    message = "\n".join(content_lines)
+    payload = {"msg_type": "text", "content": {"text": message}}
+    try:
+        resp = requests.post(webhook_url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            logger.info(f"[feishu] ETF播报推送成功，共 {len(etfs)} 只ETF")
+            return True
+        else:
+            logger.warning(f"[feishu] 推送失败: {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"[feishu] 推送异常: {e}")
+    return False
+
+
 def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Dict]] = None) -> bool:
     """
     发送选股结果通知（板块+Top10合并为一条消息）

@@ -36,6 +36,29 @@ jobs:
           path: sector_results.json
           retention-days: 1
 
+  etf:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run etf screener
+        env:
+          TZ: Asia/Shanghai
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: |
+          python run_etf.py
+
   stock:
     runs-on: ubuntu-latest
     steps:
