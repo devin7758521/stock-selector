@@ -238,13 +238,11 @@ def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Di
     ]
 
     if sector_results:
-        content_lines.append(f"🔥 强势板块（{len(sector_results)}个通过周K筛选）")
-        for i, s in enumerate(sector_results[:15], 1):
-            trend = s.get("sector_trend", "")
-            dev = s.get("vol_deviation_pct", 0)
-            amt = s.get("daily_amount_yi", 0)
-            trend_emoji = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
-            content_lines.append(f"  {i}.{trend_emoji}{s['name']}｜{trend}｜偏离{dev}%｜{amt}亿")
+        content_lines.append(f"🔥 今日涨幅前5板块")
+        for i, s in enumerate(sector_results[:5], 1):
+            gain = s.get("gain_pct", 0)
+            amt = s.get("amount_yi", 0)
+            content_lines.append(f"  {i}. 📈{s['name']}｜涨幅{gain}%｜{amt}亿")
         content_lines.append("")
         content_lines.append("─" * 30)
         content_lines.append("")
@@ -385,21 +383,19 @@ def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[Li
             "tag": "div",
             "text": {
                 "tag": "lark_md",
-                "content": f"**🔥 强势板块（{len(sector_results)}个通过周K筛选）**"
+                "content": f"🔥 今日涨幅前5板块"
             }
         })
 
         sector_items = []
-        for s in sector_results[:15]:
-            trend = s.get("sector_trend", "")
-            dev = s.get("vol_deviation_pct", 0)
-            amt = s.get("daily_amount_yi", 0)
-            trend_icon = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
+        for s in sector_results[:5]:
+            gain = s.get("gain_pct", 0)
+            amt = s.get("amount_yi", 0)
             sector_items.append({
                 "tag": "div",
                 "text": {
                     "tag": "lark_md",
-                    "content": f"{trend_icon} **{s['name']}**｜{trend}｜偏离{dev}%｜{amt}亿"
+                    "content": f"📈 **{s['name']}**｜涨幅{gain}%｜{amt}亿"
                 }
             })
 

@@ -77,20 +77,26 @@ class MarketEnvironmentAnalyzer:
 
         if matched_sectors:
             best = matched_sectors[0]
-            trend = best.get("sector_trend", "")
-            dev = best.get("vol_deviation_pct", 0)
+            rank = best.get("rank", 0)
+            gain = best.get("gain_pct", 0)
 
-            if "放量上行" in trend:
-                details.append(f"所属板块「{best['name']}」{trend}，板块联动利好")
+            if rank == 1:
+                details.append(f"所属板块「{best['name']}」涨幅{gain}%，今日涨幅第1，板块联动极强")
                 score += 10
-            elif "温和上行" in trend:
-                details.append(f"所属板块「{best['name']}」{trend}，板块联动偏多")
+            elif rank == 2:
+                details.append(f"所属板块「{best['name']}」涨幅{gain}%，今日涨幅第2，板块联动强")
+                score += 8
+            elif rank == 3:
+                details.append(f"所属板块「{best['name']}」涨幅{gain}%，今日涨幅第3，板块联动较强")
                 score += 5
-            elif "缩量整理" in trend:
-                details.append(f"所属板块「{best['name']}」{trend}，板块联动中性")
-            elif "缩量下行" in trend:
-                details.append(f"所属板块「{best['name']}」{trend}，板块联动偏空")
-                score -= 5
+            elif rank == 4:
+                details.append(f"所属板块「{best['name']}」涨幅{gain}%，今日涨幅第4，板块联动一般")
+                score += 3
+            elif rank == 5:
+                details.append(f"所属板块「{best['name']}」涨幅{gain}%，今日涨幅第5，板块联动有限")
+                score += 2
+            else:
+                details.append(f"所属板块「{best['name']}」涨幅{gain}%，板块联动中性")
         else:
             strong_names = [s["name"] for s in self.sector_results[:5]]
             details.append(f"当前强势板块: {'、'.join(strong_names)}")

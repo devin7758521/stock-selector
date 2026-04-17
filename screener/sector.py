@@ -193,3 +193,54 @@ def filter_sector_weekly(cfg: dict) -> List[Dict]:
 
     logger.info(f"[sector] 板块筛选: {total} → {len(passed)} 个通过")
     return passed
+
+
+def fetch_top_sectors_by_gain(top: int = 5) -> List[Dict]:
+    """
+    获取今日涨幅前N名的行业板块（用于板块联动）
+
+    Args:
+        top: 取前几名，默认5
+
+    Returns:
+        [{"rank", "code", "name", "gain_pct", "amount_yi"}]
+    """
+    try:
+        import akshare as ak
+        df = ak.stock_board_industry_em(indicator="rise_rate")
+        if df is None or df.empty:
+            logger.warning("[sector] 行业板块涨幅数据为空")
+            return []
+        df = df.head(30)
+        gain_col = None
+        for col in ["涨跌幅", "涨幅", "今日涨跌幅"]:
+            if col in df.columns:
+                gain_col = col
+                break
+        if gain_col is None:
+            logger.warning(f"[sector] 无法识别涨跌幅列: {df.columns.tolist()}")
+            return []
+        df = df.rename(columns={
+            "板块名称": "name",
+            "板块代码": "code",
+            gain_col: "gain_pct"
+        })
+        for col in ["涨跌幅", "涨幅", "今日涨跌幅", "成交额"]:
+            if col in df.columns:
+                df["gain_pct"] = pd.to_numeric(df["gain_pct"], errors="coerce")
+                break
+        df = df.sort_values("gain_pct", ascending=False).head(top).reset_index(drop=True)
+        result = []
+        for i, row in df.iterrows():
+            result.append({
+                "rank": i + 1,
+                "code": str(row.get("code", "")),
+                "name": str(row.get("name", "")),
+                "gain_pct": round(float(row.get("gain_pct", 0)), 2),
+                "amount_yi": round(float(row.get("amount_yi", 0)) / 1e8, 2) if pd.notna(row.get("amount_yi")) else 0,
+            })
+        logger.info(f"[sector] 今日涨幅前{top}: {[s['name'] for s in result]}")
+        return result
+    except Exception as e:
+        logger.warning(f"[sector] 获取行业板块涨幅失败: {e}")
+        return []

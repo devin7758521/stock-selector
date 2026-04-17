@@ -93,7 +93,8 @@ class StockSelector:
                 logger.debug(f"读取 sector_results.json 失败: {e}")
 
         logger.info("实时筛选板块...")
-        return filter_sector_weekly(self.config)
+        from screener.sector import fetch_top_sectors_by_gain
+        return fetch_top_sectors_by_gain(5)
     
     def process_stock(self, code: str, name: str) -> Optional[Dict]:
         """
