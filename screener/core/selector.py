@@ -276,6 +276,6 @@ class StockSelector:
         # Step 6: 飞书推送
         logger.info("Step 6: 推送飞书...")
         sector_res = getattr(self, 'sector_results', None)
-        send_feishu(ranked_results, self.config, sector_results=sector_res)
+        send_feishu_card(ranked_results, self.config, sector_results=sector_res)
 
         return ranked_results
