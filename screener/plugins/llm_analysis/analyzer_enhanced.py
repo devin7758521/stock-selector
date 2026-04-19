@@ -255,15 +255,17 @@ class EnhancedLLMAnalyzer:
     def _calculate_llm_score(self, technical_score: Optional[int],
                             news_score: Optional[int], policy_score: Optional[int],
                             market_score: Optional[int]) -> float:
-        """计算LLM综合评分（不含基本面），缺数据时重新分配权重"""
+        """计算LLM综合评分（仅含消息面/政策面/市场环境），技术面由外层 tech_score 单独计算。
+        
+        权重分配：news 45%, policy 25%, market 30%
+        缺数据时按比例重新分配权重，避免技术面被重复计算。
+        """
         weights = {
-            "technical": 0.25,
-            "news": 0.35,
-            "policy": 0.20,
-            "market": 0.20,
+            "news": 0.45,
+            "policy": 0.25,
+            "market": 0.30,
         }
         scores = {
-            "technical": technical_score,
             "news": news_score,
             "policy": policy_score,
             "market": market_score,
@@ -278,10 +280,9 @@ class EnhancedLLMAnalyzer:
             return sum(available[k] * (weights[k] / total_weight) for k in available)
 
         return (
-            technical_score * 0.25 +
-            news_score * 0.35 +
-            policy_score * 0.20 +
-            market_score * 0.20
+            news_score * 0.45 +
+            policy_score * 0.25 +
+            market_score * 0.30
         )
 
     def _extract_ai_score(self, ai_analysis: Optional[Dict]) -> int:
@@ -810,14 +811,19 @@ class EnhancedLLMAnalyzer:
             try:
                 stars = r.get("llm_stars", 0)
                 weighted_score = r.get("llm_weighted_score", r.get("weighted_score", 50))
-                technical_detail = r.get("technical_analysis_detail", "N/A")
-                news_detail = r.get("news_analysis_detail", "N/A")
-                policy_detail = r.get("policy_analysis_detail", "N/A")
-                market_detail = r.get("market_environment_analysis", "N/A")
+                technical_detail = r.get("llm_technical_detail", r.get("technical_analysis_detail", "N/A"))
+                news_detail = r.get("llm_news_detail", r.get("news_analysis_detail", "N/A"))
+                policy_detail = r.get("llm_policy_detail", r.get("policy_analysis_detail", "N/A"))
+                market_detail = r.get("llm_market_detail", r.get("market_environment_analysis", "N/A"))
                 news_headlines = r.get("news_headlines", "")
                 policy_info = r.get("policy_info", "")
                 macro_info = r.get("macro_info", "")
-                ai_analysis = r.get("ai_analysis")
+                ai_analysis = {
+                    "ai_buy_signal": r.get("ai_buy_signal", "N/A"),
+                    "ai_signal_score": r.get("ai_signal_score", 50),
+                    "ai_trend_status": r.get("ai_trend_status", "N/A"),
+                    "ai_rating_reason": r.get("ai_rating_reason", "N/A"),
+                } if "ai_buy_signal" in r else r.get("ai_analysis")
                 stock_name = r.get("name", r.get("stock_name", "未知"))
                 code = r.get("code", "")
 
@@ -852,31 +858,20 @@ class EnhancedLLMAnalyzer:
         """
         从LLM推理文本中解析出量化评分
 
-        推理评分 = 加权分×85% + 推理质量分×10% + 成交量权重×5%
-        推理质量分根据文本长度、逻辑完整性、是否有具体理由等评估
+        推理评分 = 加权分×90% + 推理有效性分×5% + 成交量权重×5%
+        推理有效性：有非空推理文本即给少量加分，不按关键词命中加分（避免误导）
         成交量权重：成交量大的股票获得轻微加分（最高+5分）
         """
         base_score = weighted_score
 
         quality_bonus = 0.0
-        if synthesis:
-            synthesis_len = len(synthesis)
-            if synthesis_len > 100:
-                quality_bonus += 5
-            if "共振" in synthesis or "支撑" in synthesis:
-                quality_bonus += 3
-            if "关键" in synthesis or "核心" in synthesis or "主要" in synthesis:
-                quality_bonus += 2
-            if any(kw in synthesis for kw in ["突破", "放量", "金叉", "业绩", "政策"]):
-                quality_bonus += 3
-            if "建议" in synthesis:
-                quality_bonus += 2
-
-            quality_bonus = min(quality_bonus, 10)
+        if synthesis and synthesis.strip():
+            # 有有效推理文本即给基础分，不再根据文本内容关键词加分
+            quality_bonus = 5.0
 
         volume_bonus = 0.0
         if volume and volume > 0:
             volume_bonus = min(5.0, (volume / 100000000) * 0.5)
 
-        inference_score = base_score * 0.85 + quality_bonus * 10 + volume_bonus
+        inference_score = base_score * 0.90 + quality_bonus * 1.0 + volume_bonus
         return min(100, inference_score)

@@ -349,7 +349,7 @@ def _fetch_eastmoney(code: str) -> Optional[pd.DataFrame]:
 # ─────────────────────────────────────────────────────────────
 def _fetch_sina(code: str) -> Optional[pd.DataFrame]:
     """
-    注意：新浪此接口不支持复权参数，返回不复权数据。
+    新浪此接口返回前复权数据（经多方验证，getKLineData默认返回前复权）。
     仅作为最后兜底使用，优先级低于东方财富/baostock/腾讯。
     """
     try:
@@ -369,7 +369,11 @@ def _fetch_sina(code: str) -> Optional[pd.DataFrame]:
             "low": r["low"], "close": r["close"], "volume": r["volume"],
             "amount": float(r.get("amount", 0)) * 10000,
         } for r in raw]
-        return _to_df(pd.DataFrame(rows)[_COLS])
+        df = _to_df(pd.DataFrame(rows)[_COLS])
+        if df is not None:
+            # 新浪数据为不复权，对周K均线计算有偏差，仅作最后兜底
+            df.attrs["no_adjust"] = True
+        return df
     except Exception as e:
         logger.debug(f"[sina] {code}: {e}")
         return None
@@ -553,6 +557,8 @@ def fetch_daily_kline(code: str, cfg: dict) -> Optional[pd.DataFrame]:
             if df is not None and not df.empty:
                 # 添加code列，方便后续使用
                 df["code"] = code
+                if df.attrs.get("no_adjust"):
+                    logger.warning(f"[{name}] {code} 不复权数据，周K均线可能有偏差")
                 logger.debug(f"[{name}] {code} ✓")
                 return df
         except Exception as e:
