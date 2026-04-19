@@ -207,39 +207,72 @@ def fetch_top_sectors_by_gain(top: int = 5) -> List[Dict]:
     """
     try:
         import akshare as ak
-        df = ak.stock_board_industry_em(indicator="rise_rate")
-        if df is None or df.empty:
-            logger.warning("[sector] 行业板块涨幅数据为空")
+        df = ak.stock_board_industry_spot_em(indicator="涨跌幅")
+        if df is not None and not df.empty:
+            gain_col = None
+            for col in ["涨跌幅", "涨幅", "今日涨跌幅"]:
+                if col in df.columns:
+                    gain_col = col
+                    break
+            if gain_col is None:
+                logger.warning(f"[sector] 无法识别涨跌幅列: {df.columns.tolist()}")
+                return []
+            df = df.rename(columns={
+                "板块名称": "name",
+                "板块代码": "code",
+                gain_col: "gain_pct"
+            })
+            df["gain_pct"] = pd.to_numeric(df["gain_pct"], errors="coerce")
+            df = df.sort_values("gain_pct", ascending=False).head(top).reset_index(drop=True)
+            result = []
+            for i, row in df.iterrows():
+                amount_col = "成交额" if "成交额" in df.columns else None
+                result.append({
+                    "rank": i + 1,
+                    "code": str(row.get("code", "")),
+                    "name": str(row.get("name", "")),
+                    "gain_pct": round(float(row.get("gain_pct", 0)), 2),
+                    "amount_yi": round(float(row.get(amount_col, 0)) / 1e8, 2) if amount_col and pd.notna(row.get(amount_col)) else 0,
+                })
+            logger.info(f"[sector] 今日涨幅前{top}: {[s['name'] for s in result]}")
+            return result
+    except Exception as e:
+        logger.debug(f"[sector] akshare行业板块涨幅失败: {e}")
+
+    try:
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": "1", "pz": "50", "po": "1", "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2", "invt": "2", "fid": "f3",
+            "fs": "m:90+t:2+f:!50",
+            "fields": "f12,f14,f3,f6",
+        }
+        resp = requests.get(url, params=params, headers=random_headers(), timeout=15)
+        resp.raise_for_status()
+        data = resp.json().get("data", {})
+        diff = data.get("diff", []) or []
+        if not diff:
+            logger.warning("[sector] 东方财富HTTP行业板块涨幅为空")
             return []
-        df = df.head(30)
-        gain_col = None
-        for col in ["涨跌幅", "涨幅", "今日涨跌幅"]:
-            if col in df.columns:
-                gain_col = col
-                break
-        if gain_col is None:
-            logger.warning(f"[sector] 无法识别涨跌幅列: {df.columns.tolist()}")
-            return []
-        df = df.rename(columns={
-            "板块名称": "name",
-            "板块代码": "code",
-            gain_col: "gain_pct"
-        })
-        for col in ["涨跌幅", "涨幅", "今日涨跌幅", "成交额"]:
-            if col in df.columns:
-                df["gain_pct"] = pd.to_numeric(df["gain_pct"], errors="coerce")
-                break
+        df = pd.DataFrame([{
+            "code": i.get("f12", ""),
+            "name": i.get("f14", ""),
+            "gain_pct": i.get("f3", 0),
+            "amount_yi": i.get("f6", 0),
+        } for i in diff])
+        df["gain_pct"] = pd.to_numeric(df["gain_pct"], errors="coerce")
         df = df.sort_values("gain_pct", ascending=False).head(top).reset_index(drop=True)
         result = []
         for i, row in df.iterrows():
             result.append({
                 "rank": i + 1,
-                "code": str(row.get("code", "")),
-                "name": str(row.get("name", "")),
-                "gain_pct": round(float(row.get("gain_pct", 0)), 2),
-                "amount_yi": round(float(row.get("amount_yi", 0)) / 1e8, 2) if pd.notna(row.get("amount_yi")) else 0,
+                "code": str(row["code"]),
+                "name": str(row["name"]),
+                "gain_pct": round(float(row["gain_pct"]), 2),
+                "amount_yi": round(float(row["amount_yi"]) / 1e8, 2),
             })
-        logger.info(f"[sector] 今日涨幅前{top}: {[s['name'] for s in result]}")
+        logger.info(f"[sector] 今日涨幅前{top}(HTTP): {[s['name'] for s in result]}")
         return result
     except Exception as e:
         logger.warning(f"[sector] 获取行业板块涨幅失败: {e}")

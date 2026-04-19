@@ -227,7 +227,7 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
     if pd.isna(dif_val) or pd.isna(dea_val) or dif_val <= dea_val:
         return None
     dea_abs = abs(dea_val)
-    if dea_abs > 1e-9 and (dif_val - dea_val) / dea_abs > 0.10:
+    if dea_abs > 1e-9 and (dif_val - dea_val) / dea_abs > 0.15:
         return None
     with _lock:
         _stats["pass_macd"] += 1
