@@ -496,7 +496,7 @@ def search_tavily_stock_news(stock_name: str, stock_code: str = "",
     """
     results: List[NewsResult] = []
 
-    tavily_key = os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API_KEY")
+    tavily_key = os.environ.get("TAVILY_API_KEY") or os.environ.get("TAVILY_API_KEY_2")
     if not tavily_key:
         return results
 
