@@ -250,38 +250,30 @@ def fetch_top_sectors_by_gain(top: int = 5) -> List[Dict]:
     except Exception as e:
         logger.debug(f"[sector] 东方财富HTTP行业板块涨幅失败: {e}")
 
-    # 备源：akshare stock_board_industry_name_em（可能无涨跌幅，尝试补充）
+    # 备源：akshare stock_board_industry_summary_ths（同花顺板块汇总，含涨跌幅+成交额）
     try:
         import akshare as ak
-        df = ak.stock_board_industry_name_em()
+        df = ak.stock_board_industry_summary_ths()
         if df is not None and not df.empty:
-            gain_col = None
-            for col in ["涨跌幅", "涨幅", "今日涨跌幅", "change"]:
-                if col in df.columns:
-                    gain_col = col
-                    break
-            if gain_col is None:
-                logger.warning(f"[sector] akshare板块无涨跌幅列: {df.columns.tolist()}")
-            else:
-                df = df.rename(columns={
-                    "板块名称": "name", "板块代码": "code", gain_col: "gain_pct"
+            gain_col = "涨跌幅"
+            amount_col = "总成交额"
+            df = df.rename(columns={"板块": "name", gain_col: "gain_pct", amount_col: "amount_yi"})
+            df["gain_pct"] = pd.to_numeric(df["gain_pct"], errors="coerce")
+            df["amount_yi"] = pd.to_numeric(df["amount_yi"], errors="coerce")
+            df = df.dropna(subset=["gain_pct"]).sort_values("gain_pct", ascending=False).head(top).reset_index(drop=True)
+            result = []
+            for i, row in df.iterrows():
+                result.append({
+                    "rank": i + 1,
+                    "code": "",
+                    "name": str(row.get("name", "")),
+                    "gain_pct": round(float(row.get("gain_pct", 0)), 2),
+                    "amount_yi": round(float(row.get("amount_yi", 0)), 2) if pd.notna(row.get("amount_yi")) else 0,
                 })
-                df["gain_pct"] = pd.to_numeric(df["gain_pct"], errors="coerce")
-                df = df.dropna(subset=["gain_pct"]).sort_values("gain_pct", ascending=False).head(top).reset_index(drop=True)
-                result = []
-                for i, row in df.iterrows():
-                    amount_col = "成交额" if "成交额" in df.columns else None
-                    result.append({
-                        "rank": i + 1,
-                        "code": str(row.get("code", "")),
-                        "name": str(row.get("name", "")),
-                        "gain_pct": round(float(row.get("gain_pct", 0)), 2),
-                        "amount_yi": round(float(row.get(amount_col, 0)) / 1e8, 2) if amount_col and pd.notna(row.get(amount_col)) else 0,
-                    })
-                logger.info(f"[sector] 今日涨幅前{top}(akshare): {[s['name'] for s in result]}")
-                return result
+            logger.info(f"[sector] 今日涨幅前{top}(akshare/ths): {[s['name'] for s in result]}")
+            return result
     except Exception as e:
-        logger.debug(f"[sector] akshare行业板块涨幅失败: {e}")
+        logger.debug(f"[sector] akshare同花顺板块涨幅失败: {e}")
 
     logger.warning("[sector] 获取行业板块涨幅失败（所有源均失败）")
     return []
