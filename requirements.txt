@@ -14,4 +14,5 @@ PyQt6
 tenacity
 beautifulsoup4
 tavily-python
+scrapling
 

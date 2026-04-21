@@ -66,7 +66,7 @@ class LLMAnalysisPlugin(Plugin):
                 nested.get("primary_model")
                 or self.config.get("primary_model")
                 or os.environ.get("LLM_PRIMARY_MODEL", "")
-                or os.environ.get("LLM_MODEL", "gemini-2.0-flash")
+                or os.environ.get("LLM_MODEL", "gemini-2.5-flash")
             )
             fallback_model = (
                 nested.get("fallback_model")
@@ -100,6 +100,10 @@ class LLMAnalysisPlugin(Plugin):
             else:
                 logger.warning("DEEPSEEK_API_KEY 未设置！fallback 将失败")
 
+            # 第二 Gemini Key（三级降级）
+            gemini_api_key_2 = os.environ.get("GEMINI_API_KEY_2", "")
+            gemini_model_2 = os.environ.get("GEMINI_MODEL_2", "gemini-2.5-flash")
+
             tavily_keys = []
             tavily_key = os.environ.get('TAVILY_API_KEY', '')
             if tavily_key:
@@ -110,7 +114,9 @@ class LLMAnalysisPlugin(Plugin):
                 model=primary_model,
                 fallback_model=fallback_model,
                 deepseek_api_key=deepseek_api_key,
-                sector_results=self.sector_results
+                sector_results=self.sector_results,
+                gemini_api_key_2=gemini_api_key_2,
+                gemini_model_2=gemini_model_2
             )
             self.search_service = SearchService(tavily_keys=tavily_keys if tavily_keys else None)
 

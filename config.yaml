@@ -34,12 +34,19 @@ plugins:
     enabled: true
   llm_analysis:
     enabled: true
-    primary_model: "gemini-2.0-flash"      # 主模型
+    primary_model: "gemini-2.5-flash"      # 主模型
     fallback_model: "deepseek-reasoner"   # 备用模型（当主模型失败时自动切换）
     api_key: ""                           # 主模型API Key（留空则使用环境变量）
+    # 三级降级：Gemini(#1) → Gemini(#2) → DeepSeek
+    # 设置环境变量 GEMINI_API_KEY_2 和 GEMINI_MODEL_2 启用第二 Gemini Key
   stock_list_analysis:
     enabled: true
   technical_analysis:
     enabled: true
   fundamental_analysis:
     enabled: false
+
+# Scrapling 新闻抓取配置
+# 设置环境变量 SCRAPLING_MODE=basic(默认) 或 stealth(Playwright反爬)
+scrapling:
+  mode: "basic"  # basic: HTTP直接请求(快) | stealth: Playwright反爬(慢但稳)

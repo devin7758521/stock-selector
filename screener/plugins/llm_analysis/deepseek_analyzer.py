@@ -9,6 +9,7 @@ Copyright (c) 2026 stock selector. All rights reserved.
 
 import logging
 import json
+import os
 import time
 import threading
 from typing import Dict, Any, Optional, List
@@ -156,17 +157,25 @@ class LLMNewsAnalyzer:
     LLM 新闻分析器
 
     支持 DeepSeek 和 Gemini 两大LLM进行新闻分析。
+    借鉴 quant-feishu 的三级降级轮换机制：
+    Gemini(#1) → Gemini(#2) → DeepSeek
     """
 
-    def __init__(self, api_key: str, model: str = "deepseek", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None):
+    def __init__(self, api_key: str, model: str = "deepseek",
+                 fallback_model: Optional[str] = None,
+                 deepseek_api_key: Optional[str] = None,
+                 gemini_api_key_2: Optional[str] = None,
+                 gemini_model_2: Optional[str] = None):
         """
         初始化 LLM 新闻分析器
 
         Args:
             api_key: 主模型 API 密钥
-            model: 主模型名称，如 deepseek-chat、gemini-1.5-flash 等
+            model: 主模型名称，如 deepseek-chat、gemini-2.5-flash 等
             fallback_model: 备用模型名称，如 deepseek-reasoner 等
             deepseek_api_key: DeepSeek 专用 API Key（用于 fallback）
+            gemini_api_key_2: 第二个 Gemini API Key（降级备选）
+            gemini_model_2: 第二个 Gemini 模型名称
         """
         self.api_key = api_key
         self.model = model
@@ -179,10 +188,37 @@ class LLMNewsAnalyzer:
             if "gemini" in model.lower() and self.deepseek_api_key:
                 logger.warning("DEEPSEEK_API_KEY 未设置，fallback 将使用主模型 API Key，可能导致认证失败！")
 
+        # 第二 Gemini Key（三级降级）
+        self.gemini_api_key_2 = gemini_api_key_2 or os.environ.get("GEMINI_API_KEY_2", "")
+        self.gemini_model_2 = gemini_model_2 or os.environ.get("GEMINI_MODEL_2", "gemini-2.5-flash")
+
+        # 全局轮换索引
+        self._provider_idx = 0
+        self._providers = self._build_providers()
+
+    def _build_providers(self) -> list:
+        """构建 AI 提供商降级链：Gemini(#1) → Gemini(#2) → DeepSeek"""
+        providers = []
+        if "gemini" in self.model.lower() and self.api_key:
+            providers.append({"name": "gemini", "api_key": self.api_key, "model": self.model_name})
+        if self.gemini_api_key_2:
+            providers.append({"name": "gemini2", "api_key": self.gemini_api_key_2, "model": self.gemini_model_2})
+        if self.deepseek_api_key and self.deepseek_api_key != self.api_key:
+            providers.append({"name": "deepseek", "api_key": self.deepseek_api_key,
+                              "model": self.fallback_model if self.fallback_model and "deepseek" not in self.model.lower() else "deepseek-chat"})
+        elif self.deepseek_api_key and "deepseek" not in self.model.lower():
+            providers.append({"name": "deepseek", "api_key": self.deepseek_api_key,
+                              "model": self.fallback_model or "deepseek-chat"})
+        if not providers and self.api_key:
+            providers.append({"name": "deepseek" if "deepseek" in self.model.lower() else "gemini",
+                              "api_key": self.api_key, "model": self.model_name})
+        logger.info(f"AI Provider 降级链: {[p['name'] for p in providers]}")
+        return providers
+
     def analyze(self, news_context: str, stock_name: str,
                 code: str, industry: Optional[str] = None) -> LLMAnalysisResult:
         """
-        分析新闻内容
+        分析新闻内容（三级降级轮换：Gemini → Gemini2 → DeepSeek）
 
         Args:
             news_context: 新闻上下文
@@ -206,29 +242,59 @@ class LLMNewsAnalyzer:
                 error_message="无新闻内容"
             )
 
-        try:
-            if "gemini" in self.model.lower():
-                result = self._analyze_with_gemini(news_context, stock_name, code, industry)
-                if not result.success or result.error_message:
-                    if "429" in (result.error_message or "") or "503" in (result.error_message or "") or "quota" in (result.error_message or "").lower():
-                        logger.warning(f"Gemini API 失败 ({result.error_message})，自动切换到 {self.fallback_model}")
-                        return self._analyze_with_deepseek(news_context, stock_name, code, industry)
-                return result
-            else:
-                return self._analyze_with_deepseek(news_context, stock_name, code, industry)
-        except Exception as e:
-            logger.error(f"LLM 分析异常: {e}", exc_info=True)
-            return LLMAnalysisResult(
-                sentiment_score=50,
-                sentiment_reason=f"分析异常: {str(e)}",
-                key_events=[],
-                policy_impact="分析异常",
-                macro_impact="分析异常",
-                investment_suggestion="观望",
-                confidence="低",
-                success=False,
-                error_message=str(e)
-            )
+        # 三级降级轮换
+        tried = []
+        for attempt in range(len(self._providers)):
+            idx = (self._provider_idx + attempt) % len(self._providers)
+            p = self._providers[idx]
+            if p["name"] in tried:
+                continue
+            tried.append(p["name"])
+
+            try:
+                if p["name"] == "gemini" or p["name"] == "gemini2":
+                    result = self._analyze_with_gemini_key(
+                        news_context, stock_name, code, industry,
+                        api_key=p["api_key"], model=p["model"]
+                    )
+                else:
+                    result = self._analyze_with_deepseek_key(
+                        news_context, stock_name, code, industry,
+                        api_key=p["api_key"], model=p["model"]
+                    )
+
+                if result.success and not result.error_message:
+                    self._provider_idx = (idx + 1) % len(self._providers)
+                    logger.info(f"AI 分析成功(provider={p['name']}), 下次轮换到 idx={self._provider_idx}")
+                    return result
+
+                # 429/503 等可降级错误
+                err = result.error_message or ""
+                if "429" in err or "503" in err or "quota" in err.lower() or "限流" in err:
+                    logger.warning(f"Provider {p['name']} 失败({err})，降级到下一个")
+                    continue
+
+                # 其他错误也尝试下一个
+                logger.warning(f"Provider {p['name']} 分析失败: {err}")
+                continue
+
+            except Exception as e:
+                logger.warning(f"Provider {p['name']} 异常: {e}")
+                continue
+
+        # 全部失败
+        logger.error(f"所有 AI Provider 分析失败 (tried: {tried})")
+        return LLMAnalysisResult(
+            sentiment_score=50,
+            sentiment_reason=f"分析失败(tried: {tried})",
+            key_events=[],
+            policy_impact="分析异常",
+            macro_impact="分析异常",
+            investment_suggestion="观望",
+            confidence="低",
+            success=False,
+            error_message=f"所有 Provider 失败: {tried}"
+        )
 
     def synthesize(self, user_prompt: str, max_tokens: int = 700) -> Optional[str]:
         """
@@ -388,7 +454,17 @@ class LLMNewsAnalyzer:
 
     def _analyze_with_deepseek(self, news_context: str, stock_name: str,
                                code: str, industry: Optional[str]) -> LLMAnalysisResult:
-        """使用 DeepSeek 分析"""
+        """使用 DeepSeek 分析（默认参数）"""
+        model = self.fallback_model if self.fallback_model else self.model_name
+        if model in ("deepseek", "local", ""):
+            model = "deepseek-chat"
+        return self._analyze_with_deepseek_key(news_context, stock_name, code, industry,
+                                                api_key=self.deepseek_api_key, model=model)
+
+    def _analyze_with_deepseek_key(self, news_context: str, stock_name: str,
+                                    code: str, industry: Optional[str],
+                                    api_key: str, model: str) -> LLMAnalysisResult:
+        """使用 DeepSeek 分析（参数化 Key/Model）"""
         import requests
 
         industry_context = f"，所属行业：{industry}" if industry else ""
@@ -401,10 +477,9 @@ class LLMNewsAnalyzer:
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.deepseek_api_key}"
+            "Authorization": f"Bearer {api_key}"
         }
 
-        model = self.fallback_model if self.fallback_model else self.model_name
         if model in ("deepseek", "local", ""):
             model = "deepseek-chat"
 
@@ -419,52 +494,40 @@ class LLMNewsAnalyzer:
         }
 
         logger.info(f"使用 DeepSeek 模型: {model}")
-        if self.deepseek_api_key:
-            logger.info(f"DeepSeek API Key 后4位: ...{self.deepseek_api_key[-4:]}")
-        else:
-            logger.error("DeepSeek API Key 为空！无法调用 API")
+        if not api_key:
             return LLMAnalysisResult(
-                sentiment_score=50,
-                sentiment_reason="DeepSeek API Key 未设置",
-                key_events=[],
-                policy_impact="无",
-                macro_impact="无",
-                investment_suggestion="观望",
-                confidence="低",
-                success=False,
-                error_message="DeepSeek API Key 未设置"
+                sentiment_score=50, sentiment_reason="DeepSeek API Key 未设置",
+                key_events=[], policy_impact="无", macro_impact="无",
+                investment_suggestion="观望", confidence="低",
+                success=False, error_message="DeepSeek API Key 未设置"
             )
-        response = requests.post(
-            DEEPSEEK_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
+
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=30)
 
         if response.status_code != 200:
             logger.error(f"DeepSeek API 请求失败: {response.status_code} - {response.text}")
             return LLMAnalysisResult(
-                sentiment_score=50,
-                sentiment_reason="API请求失败",
-                key_events=[],
-                policy_impact="无法分析",
-                macro_impact="无法分析",
-                investment_suggestion="观望",
-                confidence="低",
-                success=False,
-                error_message=f"API错误: {response.status_code}"
+                sentiment_score=50, sentiment_reason="API请求失败",
+                key_events=[], policy_impact="无法分析", macro_impact="无法分析",
+                investment_suggestion="观望", confidence="低",
+                success=False, error_message=f"API错误: {response.status_code}"
             )
 
         result = response.json()
         content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-
         logger.info(f"DeepSeek 分析成功: {stock_name} ({code})")
-
         return self._parse_response(content)
 
     def _analyze_with_gemini(self, news_context: str, stock_name: str,
                              code: str, industry: Optional[str]) -> LLMAnalysisResult:
-        """使用 Gemini 分析"""
+        """使用 Gemini 分析（默认参数）"""
+        return self._analyze_with_gemini_key(news_context, stock_name, code, industry,
+                                              api_key=self.api_key, model=self.model_name)
+
+    def _analyze_with_gemini_key(self, news_context: str, stock_name: str,
+                                  code: str, industry: Optional[str],
+                                  api_key: str, model: str) -> LLMAnalysisResult:
+        """使用 Gemini 分析（参数化 Key/Model，支持多 Key 轮换）"""
         if not _gemini_rate_limit_wait():
             return LLMAnalysisResult(
                 sentiment_score=50,
@@ -488,14 +551,12 @@ class LLMNewsAnalyzer:
 
 请进行深度分析并输出JSON格式结果。"""
 
-        url = f"{self._get_gemini_url()}?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
         payload = {
             "contents": [{
                 "role": "user",
-                "parts": [{
-                    "text": user_prompt
-                }]
+                "parts": [{"text": user_prompt}]
             }],
             "systemInstruction": {
                 "parts": [{"text": SYSTEM_PROMPT}]
@@ -506,9 +567,7 @@ class LLMNewsAnalyzer:
             }
         }
 
-        headers = {
-            "Content-Type": "application/json"
-        }
+        headers = {"Content-Type": "application/json"}
 
         for retry in range(3):
             try:
@@ -524,15 +583,10 @@ class LLMNewsAnalyzer:
                 if response.status_code != 200:
                     logger.error(f"Gemini API 请求失败: {response.status_code} - {response.text[:500]}")
                     return LLMAnalysisResult(
-                        sentiment_score=50,
-                        sentiment_reason="API请求失败",
-                        key_events=[],
-                        policy_impact="无法分析",
-                        macro_impact="无法分析",
-                        investment_suggestion="观望",
-                        confidence="低",
-                        success=False,
-                        error_message=f"API错误: {response.status_code}"
+                        sentiment_score=50, sentiment_reason="API请求失败",
+                        key_events=[], policy_impact="无法分析", macro_impact="无法分析",
+                        investment_suggestion="观望", confidence="低",
+                        success=False, error_message=f"API错误: {response.status_code}"
                     )
 
                 _gemini_record_success()
@@ -540,31 +594,21 @@ class LLMNewsAnalyzer:
                 candidates = result.get("candidates", [])
                 if not candidates:
                     return LLMAnalysisResult(
-                        sentiment_score=50,
-                        sentiment_reason="Gemini 返回空结果",
-                        key_events=[],
-                        policy_impact="无法分析",
-                        macro_impact="无法分析",
-                        investment_suggestion="观望",
-                        confidence="低",
-                        success=False,
-                        error_message="Gemini 返回空 candidates"
+                        sentiment_score=50, sentiment_reason="Gemini 返回空结果",
+                        key_events=[], policy_impact="无法分析", macro_impact="无法分析",
+                        investment_suggestion="观望", confidence="低",
+                        success=False, error_message="Gemini 返回空 candidates"
                     )
                 candidate = candidates[0]
                 if candidate.get("finishReason") == "SAFETY":
                     return LLMAnalysisResult(
-                        sentiment_score=50,
-                        sentiment_reason="内容被安全过滤拦截",
-                        key_events=[],
-                        policy_impact="无法分析",
-                        macro_impact="无法分析",
-                        investment_suggestion="观望",
-                        confidence="低",
-                        success=False,
-                        error_message="Gemini 安全过滤拦截"
+                        sentiment_score=50, sentiment_reason="内容被安全过滤拦截",
+                        key_events=[], policy_impact="无法分析", macro_impact="无法分析",
+                        investment_suggestion="观望", confidence="低",
+                        success=False, error_message="Gemini 安全过滤拦截"
                     )
                 content = candidate.get("content", {}).get("parts", [{}])[0].get("text", "")
-                logger.info(f"Gemini 分析成功: {stock_name} ({code})")
+                logger.info(f"Gemini 分析成功: {stock_name} ({code}) [model={model}]")
                 return self._parse_response(content)
 
             except requests.exceptions.Timeout:
@@ -577,42 +621,89 @@ class LLMNewsAnalyzer:
                 break
 
         return LLMAnalysisResult(
-            sentiment_score=50,
-            sentiment_reason="Gemini重试耗尽",
-            key_events=[],
-            policy_impact="无法分析",
-            macro_impact="无法分析",
-            investment_suggestion="观望",
-            confidence="低",
-            success=False,
-            error_message="Gemini重试耗尽"
+            sentiment_score=50, sentiment_reason="Gemini重试耗尽",
+            key_events=[], policy_impact="无法分析", macro_impact="无法分析",
+            investment_suggestion="观望", confidence="低",
+            success=False, error_message="Gemini重试耗尽"
         )
 
     def _parse_response(self, content: str) -> LLMAnalysisResult:
-        """解析 LLM 返回的内容"""
+        """三级 JSON 解析（借鉴 quant-feishu）：
+        1. 直接 json.loads
+        2. 提取 ```json ... ``` 代码块
+        3. 正则逐字段提取
+        """
+        # 级别1: 直接解析
         try:
             json_start = content.find('{')
             json_end = content.rfind('}') + 1
             if json_start != -1 and json_end != 0:
                 json_str = content[json_start:json_end]
                 data = json.loads(json_str)
+                return self._build_result_from_dict(data)
+        except json.JSONDecodeError:
+            pass
 
-                return LLMAnalysisResult(
-                    sentiment_score=data.get("sentiment_score", 50),
-                    sentiment_reason=data.get("sentiment_reason", ""),
-                    key_events=data.get("key_events", []),
-                    policy_impact=data.get("policy_impact", ""),
-                    macro_impact=data.get("macro_impact", ""),
-                    investment_suggestion=data.get("investment_suggestion", "观望"),
-                    confidence=data.get("confidence", "中"),
-                    success=True
-                )
-            else:
-                return self._fallback_parse(content)
+        # 级别2: 提取 ```json ... ``` 代码块
+        import re
+        m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+                return self._build_result_from_dict(data)
+            except json.JSONDecodeError:
+                pass
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON 解析失败，尝试备用解析: {e}")
-            return self._fallback_parse(content)
+        # 级别3: 正则逐字段提取
+        parsed = {}
+        m_score = re.search(r'"sentiment_score"\s*:\s*(\d+)', content)
+        if m_score:
+            parsed["sentiment_score"] = int(m_score.group(1))
+        m_reason = re.search(r'"sentiment_reason"\s*:\s*"(.+?)"', content, re.DOTALL)
+        if m_reason:
+            parsed["sentiment_reason"] = m_reason.group(1)[:200]
+        m_events = re.findall(r'"key_events"\s*:\s*\[(.*?)\]', content, re.DOTALL)
+        if m_events:
+            items = re.findall(r'"([^"]+)"', m_events[0])
+            parsed["key_events"] = items[:3]
+        m_policy = re.search(r'"policy_impact"\s*:\s*"(.+?)"', content, re.DOTALL)
+        if m_policy:
+            parsed["policy_impact"] = m_policy.group(1)[:200]
+        m_macro = re.search(r'"macro_impact"\s*:\s*"(.+?)"', content, re.DOTALL)
+        if m_macro:
+            parsed["macro_impact"] = m_macro.group(1)[:200]
+        m_suggest = re.search(r'"investment_suggestion"\s*:\s*"(.+?)"', content, re.DOTALL)
+        if m_suggest:
+            parsed["investment_suggestion"] = m_suggest.group(1)[:50]
+        m_conf = re.search(r'"confidence"\s*:\s*"(.+?)"', content)
+        if m_conf:
+            parsed["confidence"] = m_conf.group(1)
+
+        if parsed.get("sentiment_score") is not None:
+            parsed.setdefault("sentiment_reason", "推理提取成功")
+            parsed.setdefault("key_events", [])
+            parsed.setdefault("policy_impact", "")
+            parsed.setdefault("macro_impact", "")
+            parsed.setdefault("investment_suggestion", "观望")
+            parsed.setdefault("confidence", "中")
+            return self._build_result_from_dict(parsed)
+
+        # 全部失败：降级到旧 fallback
+        logger.warning("三级 JSON 解析均失败，使用文本 fallback")
+        return self._fallback_parse(content)
+
+    def _build_result_from_dict(self, data: dict) -> LLMAnalysisResult:
+        """从字典构建 LLMAnalysisResult"""
+        return LLMAnalysisResult(
+            sentiment_score=data.get("sentiment_score", 50),
+            sentiment_reason=data.get("sentiment_reason", ""),
+            key_events=data.get("key_events", []),
+            policy_impact=data.get("policy_impact", ""),
+            macro_impact=data.get("macro_impact", ""),
+            investment_suggestion=data.get("investment_suggestion", "观望"),
+            confidence=data.get("confidence", "中"),
+            success=True
+        )
 
     def _fallback_parse(self, content: str) -> LLMAnalysisResult:
         """备用解析方法（当 JSON 解析失败时）"""

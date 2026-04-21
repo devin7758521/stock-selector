@@ -427,31 +427,86 @@ def build_all_news_context(stock_code: str, stock_name: str = "",
 
 
 def _search_news_list(stock_code: str, stock_name: str, days: int, max_results: int) -> List[NewsResult]:
-    """搜索个股新闻"""
-    news_list: List[NewsResult] = []
+    """搜索个股新闻（优先 Scrapling → AkShare → Tavily → 多源备用）"""
+    from .news_scrapling import scrapling_stock_news, scrapling_stock_news_fallback
 
-    akshare_results = search_akshare_stock_news(stock_code, stock_name, days, max_results)
-    if akshare_results:
-        news_list = akshare_results
-    else:
+    news_list: List[NewsResult] = []
+    seen: set = set()
+
+    # 1. 尝试 Scrapling 抓取（10 源，去重最全）
+    scrapling_results = scrapling_stock_news(stock_code, stock_name, max_total=max_results)
+    if scrapling_results:
+        for n in scrapling_results:
+            key = (n.title or "")[:50].lower()
+            if key not in seen:
+                seen.add(key)
+                news_list.append(n)
+
+    # 2. AkShare 补充
+    if len(news_list) < max_results:
+        akshare_results = search_akshare_stock_news(stock_code, stock_name, days, max_results)
+        for n in (akshare_results or []):
+            key = (n.title or "")[:50].lower()
+            if key not in seen:
+                seen.add(key)
+                news_list.append(n)
+
+    # 3. Tavily 补充
+    if len(news_list) < max_results:
         tavily_results = search_tavily_stock_news(stock_name, stock_code, days, max_results)
-        if tavily_results:
-            news_list = tavily_results
-        else:
-            fallback_results = search_stock_news_fallback(stock_code, stock_name, days, max_results)
-            if fallback_results:
-                news_list = fallback_results
+        for n in (tavily_results or []):
+            key = (n.title or "")[:50].lower()
+            if key not in seen:
+                seen.add(key)
+                news_list.append(n)
+
+    # 4. 多源备用
+    if len(news_list) < max_results:
+        fallback_results = scrapling_stock_news_fallback(stock_code, stock_name, max_results)
+        for n in (fallback_results or []):
+            key = (n.title or "")[:50].lower()
+            if key not in seen:
+                seen.add(key)
+                news_list.append(n)
+
+    # 5. 最终兜底：单源东方财富
+    if not news_list:
+        fallback_results = search_stock_news_fallback(stock_code, stock_name, days, max_results)
+        if fallback_results:
+            news_list = fallback_results
 
     return news_list
 
 
 def _search_market_news_list(days: int, max_results: int) -> List[NewsResult]:
-    """搜索市场新闻"""
-    try:
-        return search_akshare_market_news(days, max_results)
-    except Exception as e:
-        logger.warning(f"市场新闻搜索失败: {e}")
-        return []
+    """搜索市场新闻（Scrapling → AkShare 双源）"""
+    from .news_scrapling import scrapling_market_news
+
+    news_list: List[NewsResult] = []
+    seen: set = set()
+
+    # 1. 尝试 Scrapling 市场新闻
+    scrapling_results = scrapling_market_news(max_total=max_results)
+    if scrapling_results:
+        for n in scrapling_results:
+            key = (n.title or "")[:60].lower()
+            if key not in seen:
+                seen.add(key)
+                news_list.append(n)
+
+    # 2. AkShare 补充
+    if len(news_list) < max_results:
+        try:
+            ak_results = search_akshare_market_news(days, max_results)
+            for n in (ak_results or []):
+                key = (n.title or "")[:60].lower()
+                if key not in seen:
+                    seen.add(key)
+                    news_list.append(n)
+        except Exception as e:
+            logger.warning(f"AkShare 市场新闻补充失败: {e}")
+
+    return news_list
 
 
 def _search_macro_news_list(days: int, max_results: int) -> List[NewsResult]:

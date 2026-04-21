@@ -32,7 +32,7 @@ Step 6: 推送企业微信
 - **动态权重分配**：某维度无数据时，权重自动重新分配，不拉低总分
 - **推理评分优化**：成交量大的股票获得轻微加分（最高+5分）
 - **多数据源轮询**：东方财富、同花顺、长桥、AkShare 等
-- **多模型支持**：Gemini 2.0 Flash（主）+ DeepSeek Reasoner（备）
+- **多模型支持**：Gemini 2.5 Flash（主）+ DeepSeek Reasoner（备）
 - **企业微信推送**：支持自定义推送模板
 
 ## 配置说明
@@ -47,7 +47,7 @@ Step 6: 推送企业微信
 plugins:
   llm_analysis:
     enabled: true
-    primary_model: "gemini-2.0-flash"      # 主模型
+    primary_model: "gemini-2.5-flash"      # 主模型
     fallback_model: "deepseek-reasoner"    # 备用模型
     api_key: ""                            # 留空使用环境变量
 ```
