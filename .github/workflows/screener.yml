@@ -2,8 +2,6 @@ name: stock selector 选股
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 8 * * 1-5"
 
 jobs:
   sector:
@@ -88,5 +86,7 @@ jobs:
           LLM_MODEL:          ${{ secrets.LLM_MODEL }}
           LLM_FALLBACK_MODEL: ${{ secrets.LLM_FALLBACK_MODEL }}
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
+          GIST_PAT:           ${{ secrets.GIST_PAT }}
+          GIST_ID:            ${{ secrets.GIST_ID }}
         run: |
           python main.py
