@@ -350,7 +350,7 @@ def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Di
         return False
 
 
-def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[List[Dict]] = None) -> bool:
+def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[List[Dict]] = None, sniper_hits: Optional[Dict] = None) -> bool:
     """
     发送飞书卡片消息（富文本格式），板块+Top10合并推送
 
@@ -437,11 +437,20 @@ def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[Li
             stars = r.get('llm_stars', 0)
             stars_str = "⭐" * stars if stars else ""
 
+            # 狙击手标签
+            sniper_tag_text = ""
+            if sniper_hits:
+                from screener.sniper_store import format_sniper_tag
+                sniper_tag_text = format_sniper_tag(r.get('code', ''), sniper_hits)
+
             name_tag_color = "red" if stars == 5 else "orange" if stars == 4 else "blue" if stars == 3 else "grey"
 
             stock_lines = [
                 f"**{i}. ▶ {r['name']}（{r['code']}）**"
             ]
+
+            if sniper_tag_text:
+                stock_lines.append(f"🎯 **{sniper_tag_text}**")
 
             if 'price' in r:
                 stock_lines.append(f"价格: **{r['price']}**")

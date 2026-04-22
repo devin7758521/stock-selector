@@ -274,9 +274,20 @@ class StockSelector:
             logger.warning("LLM插件不支持推理筛选")
             ranked_results = sorted_results
 
+        # Step 5.6: 狙击手存储（7日历史，累计入选提醒）
+        sniper_hits = {}
+        try:
+            from screener.sniper_store import save_daily_results, get_multi_day_hits
+            save_daily_results(ranked_results)
+            sniper_hits = get_multi_day_hits(ranked_results)
+            if sniper_hits:
+                logger.info(f"[sniper] 7日内多次入选: {list(sniper_hits.keys())}")
+        except Exception as e:
+            logger.debug(f"[sniper] 狙击手模块失败: {e}")
+
         # Step 6: 飞书推送
         logger.info("Step 6: 推送飞书...")
         sector_res = getattr(self, 'sector_results', None)
-        send_feishu_card(ranked_results, self.config, sector_results=sector_res)
+        send_feishu_card(ranked_results, self.config, sector_results=sector_res, sniper_hits=sniper_hits)
 
         return ranked_results

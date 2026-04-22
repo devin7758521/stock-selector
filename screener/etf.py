@@ -148,11 +148,51 @@ def deduplicate_by_index(etf_df: pd.DataFrame) -> pd.DataFrame:
     return etf_dedup
 
 
-def fetch_etf_kline(symbol: str, days: int = 730) -> Optional[pd.DataFrame]:
-    """获取ETF日K线数据"""
+def _etf_secid(code: str) -> str:
+    """ETF代码转东方财富secid：5开头→1.x，1/3开头→0.x"""
+    return f"1.{code}" if code.startswith("5") else f"0.{code}"
+
+
+def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    """东方财富HTTP获取ETF日K线（主力，多线程安全）"""
+    try:
+        start_date = (datetime.today() - timedelta(days=days)).strftime("%Y%m%d")
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        params = {
+            "secid": _etf_secid(code),
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57",
+            "klt": "101", "fqt": "1",
+            "beg": start_date, "end": "20991231", "lmt": "1000",
+        }
+        resp = requests.get(url, params=params, headers=random_headers(), timeout=10)
+        resp.raise_for_status()
+        klines = (resp.json().get("data") or {}).get("klines", [])
+        if not klines:
+            return None
+        rows = []
+        for k in klines:
+            p = k.split(",")
+            rows.append({
+                "date": p[0], "open": p[1], "close": p[2],
+                "high": p[3], "low": p[4], "volume": p[5], "amount": p[6],
+            })
+        df = pd.DataFrame(rows)
+        for c in ["open", "high", "low", "close", "volume", "amount"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.dropna().sort_values("date").reset_index(drop=True)
+        return df if len(df) >= 200 else None
+    except Exception as e:
+        logger.debug(f"[etf/eastmoney] {code}: {e}")
+    return None
+
+
+def _fetch_etf_akshare(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    """akshare获取ETF日K线（备源）"""
     try:
         import akshare as ak
-        df = ak.fund_etf_hist_em(symbol=symbol, period="日k",
+        df = ak.fund_etf_hist_em(symbol=code, period="日k",
                                  start_date=(datetime.today() - timedelta(days=days)).strftime("%Y%m%d"),
                                  end_date="20991231", adjust="qfq")
         if df is not None and not df.empty:
@@ -167,8 +207,16 @@ def fetch_etf_kline(symbol: str, days: int = 730) -> Optional[pd.DataFrame]:
             df = df.dropna().sort_values("date").reset_index(drop=True)
             return df if len(df) >= 200 else None
     except Exception as e:
-        logger.debug(f"[etf/kline] {symbol}: {e}")
+        logger.debug(f"[etf/akshare] {code}: {e}")
     return None
+
+
+def fetch_etf_kline(symbol: str, days: int = 730) -> Optional[pd.DataFrame]:
+    """获取ETF日K线数据（多源轮换：东方财富→akshare）"""
+    df = _fetch_etf_eastmoney(symbol, days)
+    if df is not None:
+        return df
+    return _fetch_etf_akshare(symbol, days)
 
 
 def filter_etf_weekly(cfg: dict) -> List[Dict]:
