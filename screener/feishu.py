@@ -141,13 +141,21 @@ def send_feishu_sector(sectors: List[Dict], cfg: dict) -> bool:
     if not sectors:
         content_lines.append("今日无符合条件的强势板块。")
     else:
-        content_lines.append(f"🔥 强势板块（{len(sectors)}个通过周K筛选）")
+        content_lines.append(f"🔥 今日强势板块（{len(sectors)}个）")
         for i, s in enumerate(sectors[:15], 1):
+            # 兼容涨幅排行格式(gain_pct/amount_yi)和周K筛选格式(sector_trend/vol_deviation_pct)
+            gain = s.get("gain_pct", "")
             trend = s.get("sector_trend", "")
-            dev = s.get("vol_deviation_pct", 0)
-            amt = s.get("daily_amount_yi", 0)
-            trend_emoji = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
-            content_lines.append(f"  {i}. {trend_emoji} {s['name']}｜{trend}｜偏离{dev}%｜{amt}亿")
+            if gain != "":
+                amt = s.get("amount_yi", 0)
+                content_lines.append(f"  {i}. 📈 {s['name']}｜涨幅{gain}%｜成交{amt}亿")
+            elif trend:
+                dev = s.get("vol_deviation_pct", 0)
+                amt = s.get("daily_amount_yi", 0)
+                trend_emoji = "📈" if "上行" in trend else "📊" if "整理" in trend else "📉"
+                content_lines.append(f"  {i}. {trend_emoji} {s['name']}｜{trend}｜偏离{dev}%｜{amt}亿")
+            else:
+                content_lines.append(f"  {i}. 📈 {s['name']}")
 
     message = "\n".join(content_lines)
     payload = {"msg_type": "text", "content": {"text": message}}

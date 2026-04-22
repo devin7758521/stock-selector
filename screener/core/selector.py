@@ -166,20 +166,20 @@ class StockSelector:
         stock_list = list(zip(filtered_df["code"], filtered_df["name"]))
         logger.info(f"待下载行情的股票: {len(stock_list)} 只")
         
-        # Step 3.5: 板块周K筛选
-        logger.info("Step 3.5: 板块周K筛选...")
+        # Step 3.5: 板块涨幅筛选 → 直接推飞书，不传LLM分析器
+        logger.info("Step 3.5: 板块涨幅筛选...")
         self.sector_results = self._load_or_filter_sectors()
         if self.sector_results:
             sector_names = [s["name"] for s in self.sector_results[:10]]
-            logger.info(f"强势板块: {', '.join(sector_names)}")
-            llm_plugin = self.plugin_manager.get_plugin('llm_analysis')
-            if llm_plugin:
-                llm_plugin.sector_results = self.sector_results
-                if hasattr(llm_plugin, 'analyzer') and llm_plugin.analyzer:
-                    llm_plugin.analyzer.sector_results = self.sector_results
-                    logger.info(f"已将{len(self.sector_results)}个强势板块传递给LLM分析器")
+            logger.info(f"今日强势板块: {', '.join(sector_names)}")
+            # 直接推送板块播报到飞书
+            try:
+                from screener.feishu import send_feishu_sector
+                send_feishu_sector(self.sector_results, self.config)
+            except Exception as e:
+                logger.debug(f"板块飞书推送失败: {e}")
         else:
-            logger.warning("板块筛选无结果，后续板块联动权重为0")
+            logger.warning("板块筛选无结果")
         
         # Step 4: 并发下载 + 指标筛选
         logger.info(f"Step 4: 并发处理（线程数={max_workers}）...")
