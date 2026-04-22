@@ -32,7 +32,7 @@ import requests
 logger = logging.getLogger("stock_selector.sniper")
 
 _GIST_API = "https://api.github.com/gists"
-_FILENAME = "watchlist.json"
+_FILENAME = "watchlist_A.jason"
 _RETAIN_DAYS = 7
 
 
