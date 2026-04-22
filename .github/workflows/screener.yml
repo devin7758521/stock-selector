@@ -72,6 +72,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          scrapling install || true
 
       - name: Run stock screener
         env:
@@ -88,5 +89,6 @@ jobs:
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           GIST_PAT:           ${{ secrets.GIST_PAT }}
           GIST_ID:            ${{ secrets.GIST_ID }}
+          SCRAPLING_MODE:     basic
         run: |
           python main.py
