@@ -153,8 +153,59 @@ def _etf_secid(code: str) -> str:
     return f"1.{code}" if code.startswith("5") else f"0.{code}"
 
 
+def _etf_prefix(code: str) -> str:
+    """ETF代码转市场前缀：5开头→sh，1/3开头→sz"""
+    return "sh" if code.startswith("5") else "sz"
+
+
+_COLS = ["date", "open", "high", "low", "close", "volume", "amount"]
+
+
+def _to_etf_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """标准化并校验ETF DataFrame，少于200条视为无效"""
+    if df is None or df.empty:
+        return None
+    df = df[_COLS].copy()
+    df["date"] = pd.to_datetime(df["date"])
+    for c in ["open", "high", "low", "close", "volume", "amount"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df[df["amount"] > 0]
+    df = df.dropna().sort_values("date").reset_index(drop=True)
+    return df if len(df) >= 200 else None
+
+
+# ─────────────────────────────────────────────────────────────
+# 1. 腾讯财经（多线程安全，前复权）
+# ─────────────────────────────────────────────────────────────
+def _fetch_etf_tencent(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    try:
+        key = f"{_etf_prefix(code)}{code}"
+        url = (f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+               f"?_var=kline_dayqfq&param={key},day,,,640,qfq")
+        resp = requests.get(url, headers=random_headers(), timeout=10)
+        resp.raise_for_status()
+        text = resp.text.strip()
+        text = text[text.index("{"):]
+        import json
+        days_data = json.loads(text).get("data", {}).get(key, {}).get("qfqday", [])
+        if not days_data:
+            return None
+        rows = [{
+            "date": d[0], "open": d[1], "close": d[2],
+            "high": d[3], "low": d[4],
+            "volume": float(d[5]) * 100,
+            "amount": float(d[2]) * float(d[5]) * 100,
+        } for d in days_data]
+        return _to_etf_df(pd.DataFrame(rows)[_COLS])
+    except Exception as e:
+        logger.debug(f"[etf/tencent] {code}: {e}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 2. 东方财富HTTP（多线程安全，前复权）
+# ─────────────────────────────────────────────────────────────
 def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
-    """东方财富HTTP获取ETF日K线（主力，多线程安全）"""
     try:
         start_date = (datetime.today() - timedelta(days=days)).strftime("%Y%m%d")
         url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -177,19 +228,108 @@ def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
                 "date": p[0], "open": p[1], "close": p[2],
                 "high": p[3], "low": p[4], "volume": p[5], "amount": p[6],
             })
-        df = pd.DataFrame(rows)
-        for c in ["open", "high", "low", "close", "volume", "amount"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.dropna().sort_values("date").reset_index(drop=True)
-        return df if len(df) >= 200 else None
+        return _to_etf_df(pd.DataFrame(rows)[_COLS])
     except Exception as e:
         logger.debug(f"[etf/eastmoney] {code}: {e}")
     return None
 
 
+# ─────────────────────────────────────────────────────────────
+# 3. Tushare（多线程安全，需token）
+# ─────────────────────────────────────────────────────────────
+_ts_pro = None
+
+def _init_tushare(token: str) -> bool:
+    global _ts_pro
+    if _ts_pro is not None:
+        return True
+    if not token:
+        return False
+    try:
+        import tushare as ts
+        ts.set_token(token)
+        _ts_pro = ts.pro_api()
+        return True
+    except Exception as e:
+        logger.debug(f"[etf/tushare] 初始化失败: {e}")
+    return False
+
+
+def _fetch_etf_tushare(code: str, token: str, days: int = 730) -> Optional[pd.DataFrame]:
+    if not _init_tushare(token):
+        return None
+    try:
+        ts_code = f"{code}.SH" if code.startswith("5") else f"{code}.SZ"
+        start = (datetime.today() - timedelta(days=days)).strftime("%Y%m%d")
+        df = _ts_pro.fund_daily(ts_code=ts_code, start_date=start)
+        if df is None or df.empty:
+            return None
+        df = df.rename(columns={"trade_date": "date", "vol": "volume"})
+        df["amount"] = df["amount"] * 1000
+        return _to_etf_df(df[_COLS])
+    except Exception as e:
+        logger.debug(f"[etf/tushare] {code}: {e}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 4. 麦蕊（多线程安全，需token）
+# ─────────────────────────────────────────────────────────────
+def _fetch_etf_mairui(code: str, token: str, days: int = 730) -> Optional[pd.DataFrame]:
+    if not token:
+        return None
+    try:
+        url = f"http://api.mairui.club/hszbl/fsjy/{code}/dn/{token}"
+        resp = requests.get(url, headers=random_headers(), timeout=10)
+        resp.raise_for_status()
+        raw = resp.json()
+        if not raw:
+            return None
+        rows = [{
+            "date": r["d"], "open": r["o"], "high": r["h"], "low": r["l"],
+            "close": r["c"], "volume": r["v"],
+            "amount": r.get("e", float(r["c"]) * float(r["v"])),
+        } for r in raw]
+        df = pd.DataFrame(rows)[_COLS]
+        df["date"] = pd.to_datetime(df["date"])
+        return _to_etf_df(df[df["date"] >= datetime.today() - timedelta(days=days)])
+    except Exception as e:
+        logger.debug(f"[etf/mairui] {code}: {e}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 5. BaoStock（线程不安全，串行兜底）
+# ─────────────────────────────────────────────────────────────
+def _fetch_etf_baostock(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    try:
+        import baostock as bs
+        lg = bs.login()
+        if lg.error_code != "0":
+            return None
+        start = (datetime.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+        prefix = _etf_prefix(code)
+        rs = bs.query_history_k_data_plus(
+            f"{prefix}.{code}",
+            "date,open,high,low,close,volume,amount",
+            start_date=start, frequency="d", adjustflag="2",
+        )
+        rows = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
+        bs.logout()
+        if not rows:
+            return None
+        return _to_etf_df(pd.DataFrame(rows, columns=_COLS))
+    except Exception as e:
+        logger.debug(f"[etf/baostock] {code}: {e}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 6. AKShare（兜底）
+# ─────────────────────────────────────────────────────────────
 def _fetch_etf_akshare(code: str, days: int = 730) -> Optional[pd.DataFrame]:
-    """akshare获取ETF日K线（备源）"""
     try:
         import akshare as ak
         df = ak.fund_etf_hist_em(symbol=code, period="日k",
@@ -201,22 +341,78 @@ def _fetch_etf_akshare(code: str, days: int = 730) -> Optional[pd.DataFrame]:
                 "最高": "high", "最低": "low",
                 "成交量": "volume", "成交额": "amount",
             })
-            for c in ["open", "high", "low", "close", "volume", "amount"]:
-                df[c] = pd.to_numeric(df[c], errors="coerce")
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.dropna().sort_values("date").reset_index(drop=True)
-            return df if len(df) >= 200 else None
+            return _to_etf_df(df)
     except Exception as e:
         logger.debug(f"[etf/akshare] {code}: {e}")
     return None
 
 
-def fetch_etf_kline(symbol: str, days: int = 730) -> Optional[pd.DataFrame]:
-    """获取ETF日K线数据（多源轮换：东方财富→akshare）"""
-    df = _fetch_etf_eastmoney(symbol, days)
-    if df is not None:
-        return df
-    return _fetch_etf_akshare(symbol, days)
+# ─────────────────────────────────────────────────────────────
+# 7. 新浪财经（最后兜底）
+# ─────────────────────────────────────────────────────────────
+def _fetch_etf_sina(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    try:
+        url = ("https://money.finance.sina.com.cn/quotes_service/api/json_v2.php"
+               "/CN_MarketData.getKLineData")
+        params = {"symbol": f"{_etf_prefix(code)}{code}", "scale": 240, "ma": "no", "datalen": 730}
+        resp = requests.get(url, params=params, headers=random_headers(), timeout=10)
+        resp.raise_for_status()
+        import json
+        raw = json.loads(resp.text)
+        if not raw:
+            return None
+        rows = [{
+            "date": r["day"], "open": r["open"], "high": r["high"],
+            "low": r["low"], "close": r["close"], "volume": r["volume"],
+            "amount": float(r.get("amount", 0)) * 10000,
+        } for r in raw]
+        return _to_etf_df(pd.DataFrame(rows)[_COLS])
+    except Exception as e:
+        logger.debug(f"[etf/sina] {code}: {e}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 统一入口：7源轮换（与股票datasources同架构）
+# ─────────────────────────────────────────────────────────────
+def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[pd.DataFrame]:
+    """
+    获取ETF日K线数据（7源轮换：腾讯→东方财富→tushare→麦蕊→BaoStock→akshare→新浪）
+
+    多线程安全的数据源排前面，非安全的排后面串行兜底。
+    """
+    ds = (cfg or {}).get("datasources", {})
+    tushare_token = ds.get("tushare_token", "")
+    mairui_token = ds.get("mairui_token", "")
+
+    mt_sources = [
+        ("tencent",   lambda: _fetch_etf_tencent(symbol, days)),
+        ("eastmoney", lambda: _fetch_etf_eastmoney(symbol, days)),
+        ("tushare",   lambda: _fetch_etf_tushare(symbol, tushare_token, days)),
+        ("mairui",    lambda: _fetch_etf_mairui(symbol, mairui_token, days)),
+    ]
+    st_sources = [
+        ("baostock",  lambda: _fetch_etf_baostock(symbol, days)),
+        ("akshare",   lambda: _fetch_etf_akshare(symbol, days)),
+        ("sina",      lambda: _fetch_etf_sina(symbol, days)),
+    ]
+
+    import time, random
+    delay_min = (cfg or {}).get("request", {}).get("delay_min", 0.2)
+    delay_max = (cfg or {}).get("request", {}).get("delay_max", 0.5)
+
+    for name, fn in mt_sources + st_sources:
+        try:
+            time.sleep(random.uniform(delay_min, delay_max))
+            df = fn()
+            if df is not None and not df.empty:
+                logger.debug(f"[etf/{name}] {symbol} ✓")
+                return df
+        except Exception as e:
+            logger.debug(f"[etf/{name}] {symbol} 异常: {e}")
+
+    logger.warning(f"[etf/all failed] {symbol} 跳过")
+    return None
 
 
 def filter_etf_weekly(cfg: dict) -> List[Dict]:
@@ -251,7 +447,7 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
         etf_raw["amount"] = 0.0
         for idx, row in etf_raw.iterrows():
             try:
-                df_k = fetch_etf_kline(row["code"])
+                df_k = fetch_etf_kline(row["code"], cfg=cfg)
                 if df_k is not None and not df_k.empty:
                     etf_raw.at[idx, "amount"] = float(df_k["amount"].iloc[-1])
             except Exception:
@@ -273,7 +469,7 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
         code = str(row["code"])
         name = str(row["name"])
 
-        df_daily = fetch_etf_kline(code)
+        df_daily = fetch_etf_kline(code, cfg=cfg)
         if df_daily is None or len(df_daily) < 200:
             continue
 
