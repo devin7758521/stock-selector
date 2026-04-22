@@ -380,6 +380,7 @@ def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[
     获取ETF日K线数据（7源轮换：腾讯→东方财富→tushare→麦蕊→BaoStock→akshare→新浪）
 
     多线程安全的数据源排前面，非安全的排后面串行兜底。
+    收盘后(16:00+)锁定东方财富主力源，避免轮换随机性导致结果不一致。
     """
     ds = (cfg or {}).get("datasources", {})
     tushare_token = ds.get("tushare_token", "")
@@ -397,13 +398,26 @@ def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[
         ("sina",      lambda: _fetch_etf_sina(symbol, days)),
     ]
 
-    import time, random
+    import time, random as _random
     delay_min = (cfg or {}).get("request", {}).get("delay_min", 0.2)
     delay_max = (cfg or {}).get("request", {}).get("delay_max", 0.5)
 
+    # 收盘后(16:00+)锁定东方财富，避免轮换随机性
+    now = datetime.now()
+    after_close = now.weekday() >= 5 or (now.weekday() < 5 and now.hour >= 16)
+    if after_close:
+        try:
+            time.sleep(_random.uniform(delay_min, delay_max))
+            df = _fetch_etf_eastmoney(symbol, days)
+            if df is not None and not df.empty:
+                logger.debug(f"[etf/eastmoney-locked] {symbol} ✓ (收盘后锁定)")
+                return df
+        except Exception as e:
+            logger.debug(f"[etf/eastmoney-locked] {symbol} 异常: {e}，降级全量轮换")
+
     for name, fn in mt_sources + st_sources:
         try:
-            time.sleep(random.uniform(delay_min, delay_max))
+            time.sleep(_random.uniform(delay_min, delay_max))
             df = fn()
             if df is not None and not df.empty:
                 logger.debug(f"[etf/{name}] {symbol} ✓")

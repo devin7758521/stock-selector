@@ -528,6 +528,10 @@ def fetch_daily_kline(code: str, cfg: dict) -> Optional[pd.DataFrame]:
     delay_min = req.get("delay_min", 0.2)
     delay_max = req.get("delay_max", 0.5)
 
+    # 收盘后(16:00+)锁定主力源，避免轮换导致两次结果不一致
+    now = datetime.now()
+    after_close = now.weekday() >= 5 or (now.weekday() < 5 and now.hour >= 16)
+
     # 优先级说明：
     #   前复权可靠 + 多线程安全 → 排前
     #   前复权可靠 + 非多线程安全 → 中间兜底
@@ -544,6 +548,18 @@ def fetch_daily_kline(code: str, cfg: dict) -> Optional[pd.DataFrame]:
         ("akshare",   lambda: _fetch_akshare(code)),     # 前复权 qfq
         ("sina",      lambda: _fetch_sina(code)),        # 前复权（默认），最后兜底
     ]
+
+    # 收盘后：只用东方财富（最稳定可靠），失败再走全量轮换
+    if after_close:
+        try:
+            time.sleep(random.uniform(delay_min, delay_max))
+            df = _fetch_eastmoney(code)
+            if df is not None and not df.empty:
+                df["code"] = code
+                logger.debug(f"[eastmoney-locked] {code} ✓ (收盘后锁定)")
+                return df
+        except Exception as e:
+            logger.debug(f"[eastmoney-locked] {code} 异常: {e}，降级全量轮换")
 
     for name, fn in mt_sources + st_sources:
         try:

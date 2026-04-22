@@ -153,12 +153,21 @@ def get_current_week_info() -> Tuple[bool, float]:
       节假日周同理，比如本周只有2个交易日（春节周），
       已完成1天，scale = 2/1 = 2.0
     """
-    today = datetime.date.today()
+    now = datetime.datetime.now()
+    today = now.date()
     weekday = today.weekday()  # 0=周一, 6=周日
+    hour = now.hour
 
     # 周末，上周已完整
     if weekday >= 5:
         return True, 1.0
+
+    # 周五16:00后，本周已完整收盘
+    if weekday == 4 and hour >= 16:
+        return True, 1.0
+
+    # 工作日16:00后，今天数据已确定，但仍属未完成周
+    # （除非周五16:00后才算完整周，上面已处理）
 
     # 计算本周周一
     week_monday = today - datetime.timedelta(days=weekday)
@@ -167,6 +176,23 @@ def get_current_week_info() -> Tuple[bool, float]:
     trade_dates = get_trade_dates_cached(today.year)
     if trade_dates is not None:
         total, completed = get_week_trade_days(trade_dates, week_monday)
+
+        # 16:00后，今天也算已完成
+        if hour >= 16:
+            today_str = today.strftime("%Y-%m-%d")
+            today_is_trade = any(
+                d.date() == today for d in trade_dates
+            )
+            if today_is_trade:
+                # 重新计算completed，含今天
+                week_end = week_monday + datetime.timedelta(days=6)
+                week_mask = (
+                    (trade_dates.dt.date >= week_monday) &
+                    (trade_dates.dt.date <= week_end)
+                )
+                week_trade_days = trade_dates[week_mask]
+                completed_mask = week_trade_days.dt.date <= today
+                completed = completed_mask.sum()
 
         if total == 0:
             # 本周全是节假日，没有交易日
@@ -190,8 +216,12 @@ def get_current_week_info() -> Tuple[bool, float]:
 
     # baostock 失败时降级：用自然日估算（周一=1/5, 周二=2/5...）
     logger.warning("[calendar] 无法获取交易日历，使用自然日估算本周进度")
-    if weekday == 4:  # 周五
+    if weekday == 4 and hour >= 16:
+        return True, 1.0
+    if weekday == 4:
         return True, 1.0
     completed_approx = weekday + 1   # 周一=1, 周二=2...
+    if hour >= 16:
+        completed_approx = min(completed_approx + 1, 5)
     scale = 5.0 / completed_approx
     return False, scale
