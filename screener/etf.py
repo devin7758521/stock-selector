@@ -8,22 +8,96 @@ ETF周K筛选模块
 - 量能偏离度
 - 成交额门槛
 
-去重逻辑：追踪同一指数的多只ETF，只取成交额最大的一只参与筛选。
+去重逻辑：用东方财富实时行情获取成交额，从ETF名称提取指数关键字去重，
+同一指数只取成交额最大的一只参与筛选。
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import pandas as pd
+import requests
 
 from screener.calendar import resample_weekly, get_current_week_info
+from screener.utils import random_headers
 
 logger = logging.getLogger("stock_selector.etf")
 
 
-def fetch_etf_list_with_index() -> Optional[pd.DataFrame]:
-    """获取ETF列表（含跟踪指数信息）"""
+def fetch_etf_spot_em(min_amount: float = 0) -> Optional[pd.DataFrame]:
+    """
+    通过东方财富HTTP接口获取ETF实时行情（含成交额），一次性获取所有ETF
+
+    Args:
+        min_amount: 最小日成交额过滤（元），0=不过滤
+
+    Returns:
+        DataFrame with columns: code, name, price, gain_pct, amount, index_key
+    """
+    try:
+        all_items = []
+        page, page_size = 1, 500
+        while True:
+            url = "https://push2.eastmoney.com/api/qt/clist/get"
+            params = {
+                "pn": str(page), "pz": str(page_size), "po": "1", "np": "1",
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "fltt": "2", "invt": "2", "fid": "f6",
+                "fs": "b:MK0021",
+                "fields": "f12,f14,f2,f3,f6",
+            }
+            resp = requests.get(url, params=params, headers=random_headers(), timeout=15)
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            diff = data.get("diff", []) or []
+            if not diff:
+                break
+            all_items.extend(diff)
+            total = data.get("total", 0)
+            if page * page_size >= total:
+                break
+            page += 1
+
+        if not all_items:
+            logger.warning("[etf] 东方财富ETF实时行情为空")
+            return None
+
+        rows = []
+        for i in all_items:
+            code = str(i.get("f12", ""))
+            name = str(i.get("f14", ""))
+            amount = i.get("f6", 0)
+            if amount == "-" or amount is None:
+                amount = 0.0
+            price = i.get("f2", 0)
+            if price == "-" or price is None:
+                price = 0.0
+            gain = i.get("f3", 0)
+            if gain == "-" or gain is None:
+                gain = 0.0
+            rows.append({
+                "code": code,
+                "name": name,
+                "price": float(price),
+                "gain_pct": float(gain),
+                "amount": float(amount),
+            })
+
+        df = pd.DataFrame(rows)
+        if min_amount > 0:
+            df = df[df["amount"] >= min_amount]
+        df = df.reset_index(drop=True)
+        logger.info(f"[etf] 东方财富ETF实时行情: {len(df)} 只（成交额>={min_amount/1e8:.1f}亿）")
+        return df
+    except Exception as e:
+        logger.debug(f"[etf] 东方财富ETF实时行情失败: {e}")
+    return None
+
+
+def fetch_etf_list_akshare() -> Optional[pd.DataFrame]:
+    """通过akshare获取ETF列表（备源）"""
     try:
         import akshare as ak
         df = ak.fund_info_index_em(symbol="全部", indicator="被动指数型")
@@ -33,11 +107,45 @@ def fetch_etf_list_with_index() -> Optional[pd.DataFrame]:
                 "基金名称": "name",
                 "跟踪标的": "index_name",
             })
-            logger.info(f"[etf] 被动指数型ETF: {len(df)} 个")
+            logger.info(f"[etf] akshare被动指数型ETF: {len(df)} 个")
             return df[["code", "name", "index_name"]]
     except Exception as e:
         logger.debug(f"[etf] fund_info_index_em失败: {e}")
     return None
+
+
+def _extract_index_key(name: str) -> str:
+    """
+    从ETF名称中提取指数关键字用于去重
+
+    例: "通信ETF国泰" → "通信"
+        "沪深300ETF易方达" → "沪深300"
+        "中证500ETF" → "中证500"
+        "创业板人工智能ETF华夏" → "创业板人工智能"
+    """
+    # 去掉ETF后缀及基金公司名
+    s = re.sub(r'ETF[A-Za-z\u4e00-\u9fff]*$', '', name, flags=re.IGNORECASE)
+    s = re.sub(r'指数[AC]$', '', s)
+    s = s.strip()
+    return s if s else name
+
+
+def deduplicate_by_index(etf_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    按指数关键字去重：同一指数只保留成交额最大的ETF
+
+    Args:
+        etf_df: 必须含 code, name, amount 列
+
+    Returns:
+        去重后的 DataFrame
+    """
+    etf_df = etf_df.copy()
+    etf_df["index_key"] = etf_df["name"].apply(_extract_index_key)
+    etf_df = etf_df.sort_values("amount", ascending=False)
+    etf_dedup = etf_df.groupby("index_key", sort=False).first().reset_index()
+    logger.info(f"[etf] 去重后: {len(etf_dedup)} 只ETF（每指数一只，原始{len(etf_df)}只）")
+    return etf_dedup
 
 
 def fetch_etf_kline(symbol: str, days: int = 730) -> Optional[pd.DataFrame]:
@@ -63,41 +171,6 @@ def fetch_etf_kline(symbol: str, days: int = 730) -> Optional[pd.DataFrame]:
     return None
 
 
-def deduplicate_by_index(etf_df: pd.DataFrame, min_amount: float = 50000000) -> pd.DataFrame:
-    """
-    按跟踪指数去重：每只跟踪指数只保留成交额最大的ETF
-
-    Args:
-        etf_df: 包含 code, name, index_name 的 DataFrame
-        min_amount: 最小日成交额门槛（元），低于此值不参与去重排名
-
-    Returns:
-        去重后的 DataFrame
-    """
-    etf_df = etf_df.copy()
-    etf_df["amount_rank"] = 0.0
-
-    for idx, row in etf_df.iterrows():
-        try:
-            df = fetch_etf_kline(row["code"])
-            if df is not None and not df.empty:
-                amt = float(df["amount"].iloc[-1])
-            else:
-                amt = 0.0
-            etf_df.at[idx, "amount_rank"] = amt
-        except Exception:
-            etf_df.at[idx, "amount_rank"] = 0.0
-
-    etf_df = etf_df[etf_df["amount_rank"] >= min_amount]
-    if etf_df.empty:
-        return etf_df
-
-    etf_df = etf_df.sort_values("amount_rank", ascending=False)
-    etf_dedup = etf_df.groupby("index_name", sort=False).first().reset_index()
-    logger.info(f"[etf] 去重后: {len(etf_dedup)} 只ETF（每指数一只）")
-    return etf_dedup
-
-
 def filter_etf_weekly(cfg: dict) -> List[Dict]:
     """
     用与板块相同的周K参数筛选ETF
@@ -115,12 +188,32 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
     min_amount = scfg.get("min_daily_amount", 300000000)
     mode = scfg.get("weekly_mode", "realtime")
 
-    etf_raw = fetch_etf_list_with_index()
-    if etf_raw is None or etf_raw.empty:
-        logger.warning("[etf] 无法获取ETF列表，跳过ETF筛选")
-        return []
+    # 主源：东方财富实时行情（一次性获取成交额，避免逐个请求K线）
+    etf_spot = fetch_etf_spot_em(min_amount=min_amount)
 
-    etf_df = deduplicate_by_index(etf_raw, min_amount=min_amount)
+    if etf_spot is not None and not etf_spot.empty:
+        etf_df = deduplicate_by_index(etf_spot)
+    else:
+        # 备源：akshare（无成交额，需要逐个请求K线）
+        etf_raw = fetch_etf_list_akshare()
+        if etf_raw is None or etf_raw.empty:
+            logger.warning("[etf] 无法获取ETF列表，跳过ETF筛选")
+            return []
+        # 对akshare来源，先按成交额预筛（逐个K线），但降低门槛防止全过滤
+        etf_raw["amount"] = 0.0
+        for idx, row in etf_raw.iterrows():
+            try:
+                df_k = fetch_etf_kline(row["code"])
+                if df_k is not None and not df_k.empty:
+                    etf_raw.at[idx, "amount"] = float(df_k["amount"].iloc[-1])
+            except Exception:
+                pass
+        etf_raw = etf_raw[etf_raw["amount"] >= min_amount]
+        if etf_raw.empty:
+            logger.warning("[etf] akshare来源ETF成交额均不达标，跳过ETF筛选")
+            return []
+        etf_df = deduplicate_by_index(etf_raw)
+
     if etf_df.empty:
         logger.warning("[etf] 去重后无ETF，跳过ETF筛选")
         return []
@@ -131,7 +224,6 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
     for idx, row in etf_df.iterrows():
         code = str(row["code"])
         name = str(row["name"])
-        index_name = str(row.get("index_name", ""))
 
         df_daily = fetch_etf_kline(code)
         if df_daily is None or len(df_daily) < 200:
@@ -200,7 +292,7 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
         passed.append({
             "code": code,
             "name": name,
-            "index_name": index_name,
+            "index_name": str(row.get("index_key", "")),
             "price": round(latest_price, 4),
             "vol_deviation_pct": round(deviation * 100, 2),
             "daily_amount_yi": round(latest_amount / 1e8, 2),
