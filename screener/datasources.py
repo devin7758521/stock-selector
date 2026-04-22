@@ -214,6 +214,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
                     params = {
                         "secid": secid, "fields1": "f1,f2,f3",
                         "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                        "ut": "fa5fd1943c7b386f172d6893dbfba10b",
                         "klt": "101", "fqt": "1", "end": "20991231", "lmt": "3",
                     }
                     resp = requests.get(url, params=params, headers=random_headers(), timeout=5)
@@ -323,6 +324,7 @@ def _fetch_eastmoney(code: str) -> Optional[pd.DataFrame]:
             "secid":   _em_secid(code),
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57",
+            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
             "klt": "101", "fqt": "1",
             "beg": _start_date(), "end": "20991231", "lmt": "1000",
         }

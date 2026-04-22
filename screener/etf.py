@@ -213,6 +213,7 @@ def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
             "secid": _etf_secid(code),
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57",
+            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
             "klt": "101", "fqt": "1",
             "beg": start_date, "end": "20991231", "lmt": "1000",
         }
@@ -332,6 +333,29 @@ def _fetch_etf_baostock(code: str, days: int = 730) -> Optional[pd.DataFrame]:
 def _fetch_etf_akshare(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
         import akshare as ak
+        # fund_etf_hist_em 已知不稳定(RemoteDisconnected)，优先用新浪源
+        prefix = _etf_prefix(code)
+        symbol = f"{prefix}{code}"
+        df = ak.fund_etf_hist_sina(symbol=symbol)
+        if df is not None and not df.empty:
+            df = df.rename(columns={
+                "date": "date", "open": "open", "close": "close",
+                "high": "high", "low": "low",
+                "volume": "volume", "amount": "amount",
+            })
+            # 新浪源可能无amount列，用close*volume估算
+            if "amount" not in df.columns:
+                df["amount"] = df["close"].astype(float) * df["volume"].astype(float)
+            # 限制日期范围
+            df["date"] = pd.to_datetime(df["date"])
+            cutoff = datetime.today() - timedelta(days=days)
+            df = df[df["date"] >= cutoff]
+            return _to_etf_df(df)
+    except Exception as e:
+        logger.debug(f"[etf/akshare-sina] {code}: {e}")
+    # 降级：尝试东方财富源
+    try:
+        import akshare as ak
         df = ak.fund_etf_hist_em(symbol=code, period="日k",
                                  start_date=(datetime.today() - timedelta(days=days)).strftime("%Y%m%d"),
                                  end_date="20991231", adjust="qfq")
@@ -343,7 +367,7 @@ def _fetch_etf_akshare(code: str, days: int = 730) -> Optional[pd.DataFrame]:
             })
             return _to_etf_df(df)
     except Exception as e:
-        logger.debug(f"[etf/akshare] {code}: {e}")
+        logger.debug(f"[etf/akshare-em] {code}: {e}")
     return None
 
 
