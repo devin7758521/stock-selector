@@ -162,7 +162,7 @@ _COLS = ["date", "open", "high", "low", "close", "volume", "amount"]
 
 
 def _to_etf_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """标准化并校验ETF DataFrame，少于60条视为无效（ETF上市时间短，门槛低于股票200）"""
+    """标准化并校验ETF DataFrame，少于325条(约65周)视为无效"""
     if df is None or df.empty:
         return None
     df = df[_COLS].copy()
@@ -171,7 +171,7 @@ def _to_etf_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df[df["amount"] > 0]
     df = df.dropna().sort_values("date").reset_index(drop=True)
-    return df if len(df) >= 60 else None
+    return df if len(df) >= 325 else None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -501,7 +501,7 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
         name = str(row["name"])
 
         df_daily = fetch_etf_kline(code, cfg=cfg)
-        if df_daily is None or len(df_daily) < 60:
+        if df_daily is None or len(df_daily) < 325:
             continue
 
         latest_price = df_daily["close"].iloc[-1]
