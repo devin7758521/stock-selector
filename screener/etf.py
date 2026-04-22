@@ -331,34 +331,25 @@ def _fetch_etf_baostock(code: str, days: int = 730) -> Optional[pd.DataFrame]:
 # 6. AKShare（兜底）
 # ─────────────────────────────────────────────────────────────
 def _fetch_etf_akshare(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    """AKShare ETF数据：优先新浪源(稳定)，降级东方财富源(已知不稳定)"""
+    import akshare as ak
+    # 1. 新浪源：列名英文(date/open/high/low/close/volume)，无amount
     try:
-        import akshare as ak
-        # fund_etf_hist_em 已知不稳定(RemoteDisconnected)，优先用新浪源
         prefix = _etf_prefix(code)
         symbol = f"{prefix}{code}"
         df = ak.fund_etf_hist_sina(symbol=symbol)
         if df is not None and not df.empty:
-            df = df.rename(columns={
-                "date": "date", "open": "open", "close": "close",
-                "high": "high", "low": "low",
-                "volume": "volume", "amount": "amount",
-            })
-            # 新浪源可能无amount列，用close*volume估算
-            if "amount" not in df.columns:
-                df["amount"] = df["close"].astype(float) * df["volume"].astype(float)
-            # 限制日期范围
+            # fund_etf_hist_sina 无amount列，用close*volume估算
+            df["amount"] = df["close"].astype(float) * df["volume"].astype(float)
             df["date"] = pd.to_datetime(df["date"])
             cutoff = datetime.today() - timedelta(days=days)
             df = df[df["date"] >= cutoff]
             return _to_etf_df(df)
     except Exception as e:
         logger.debug(f"[etf/akshare-sina] {code}: {e}")
-    # 降级：尝试东方财富源
+    # 2. 东方财富源：参照 wetchat_reminder 的调用方式
     try:
-        import akshare as ak
-        df = ak.fund_etf_hist_em(symbol=code, period="日k",
-                                 start_date=(datetime.today() - timedelta(days=days)).strftime("%Y%m%d"),
-                                 end_date="20991231", adjust="qfq")
+        df = ak.fund_etf_hist_em(symbol=code, period="daily", adjust="qfq")
         if df is not None and not df.empty:
             df = df.rename(columns={
                 "日期": "date", "开盘": "open", "收盘": "close",
