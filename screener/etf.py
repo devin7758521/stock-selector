@@ -162,7 +162,7 @@ _COLS = ["date", "open", "high", "low", "close", "volume", "amount"]
 
 
 def _to_etf_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """标准化并校验ETF DataFrame，少于200条视为无效"""
+    """标准化并校验ETF DataFrame，少于60条视为无效（ETF上市时间短，门槛低于股票200）"""
     if df is None or df.empty:
         return None
     df = df[_COLS].copy()
@@ -171,7 +171,7 @@ def _to_etf_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df[df["amount"] > 0]
     df = df.dropna().sort_values("date").reset_index(drop=True)
-    return df if len(df) >= 200 else None
+    return df if len(df) >= 60 else None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -415,6 +415,7 @@ def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[
         except Exception as e:
             logger.debug(f"[etf/eastmoney-locked] {symbol} 异常: {e}，降级全量轮换")
 
+    failed_sources = []
     for name, fn in mt_sources + st_sources:
         try:
             time.sleep(_random.uniform(delay_min, delay_max))
@@ -422,10 +423,11 @@ def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[
             if df is not None and not df.empty:
                 logger.debug(f"[etf/{name}] {symbol} ✓")
                 return df
+            failed_sources.append(f"{name}=空数据")
         except Exception as e:
-            logger.debug(f"[etf/{name}] {symbol} 异常: {e}")
+            failed_sources.append(f"{name}={e}")
 
-    logger.warning(f"[etf/all failed] {symbol} 跳过")
+    logger.warning(f"[etf/all failed] {symbol} 跳过 (原因: {'; '.join(failed_sources)})")
     return None
 
 
@@ -484,7 +486,7 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
         name = str(row["name"])
 
         df_daily = fetch_etf_kline(code, cfg=cfg)
-        if df_daily is None or len(df_daily) < 200:
+        if df_daily is None or len(df_daily) < 60:
             continue
 
         latest_price = df_daily["close"].iloc[-1]

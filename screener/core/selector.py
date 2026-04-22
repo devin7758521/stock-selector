@@ -172,12 +172,6 @@ class StockSelector:
         if self.sector_results:
             sector_names = [s["name"] for s in self.sector_results[:10]]
             logger.info(f"今日强势板块: {', '.join(sector_names)}")
-            # 直接推送板块播报到飞书
-            try:
-                from screener.feishu import send_feishu_sector
-                send_feishu_sector(self.sector_results, self.config)
-            except Exception as e:
-                logger.debug(f"板块飞书推送失败: {e}")
         else:
             logger.warning("板块筛选无结果")
         
