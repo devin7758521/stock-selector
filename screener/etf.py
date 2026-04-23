@@ -64,9 +64,14 @@ def fetch_etf_spot_em(min_amount: float = 0) -> Optional[pd.DataFrame]:
             logger.warning("[etf] 东方财富ETF实时行情为空")
             return None
 
+        # 只保留交易所交易的ETF代码（排除场外基金如008326等无K线数据的代码）
+        _VALID_ETF_PREFIX = ("5", "15", "16")
+
         rows = []
         for i in all_items:
             code = str(i.get("f12", ""))
+            if not code or not code.startswith(_VALID_ETF_PREFIX):
+                continue
             name = str(i.get("f14", ""))
             amount = i.get("f6", 0)
             if amount == "-" or amount is None:
@@ -97,7 +102,7 @@ def fetch_etf_spot_em(min_amount: float = 0) -> Optional[pd.DataFrame]:
 
 
 def fetch_etf_list_akshare() -> Optional[pd.DataFrame]:
-    """通过akshare获取ETF列表（备源）"""
+    """通过akshare获取ETF列表（备源），仅保留交易所交易代码"""
     try:
         import akshare as ak
         df = ak.fund_info_index_em(symbol="全部", indicator="被动指数型")
@@ -107,6 +112,9 @@ def fetch_etf_list_akshare() -> Optional[pd.DataFrame]:
                 "基金名称": "name",
                 "跟踪标的": "index_name",
             })
+            # 只保留交易所ETF代码（沪市5开头，深市15/16开头）
+            _VALID_ETF_PREFIX = ("5", "15", "16")
+            df = df[df["code"].astype(str).str.startswith(_VALID_ETF_PREFIX)]
             logger.info(f"[etf] akshare被动指数型ETF: {len(df)} 个")
             return df[["code", "name", "index_name"]]
     except Exception as e:
@@ -149,12 +157,12 @@ def deduplicate_by_index(etf_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _etf_secid(code: str) -> str:
-    """ETF代码转东方财富secid：5开头→1.x，1/3开头→0.x"""
+    """ETF代码转东方财富secid：5开头→1.x(沪)，15/16开头→0.x(深)"""
     return f"1.{code}" if code.startswith("5") else f"0.{code}"
 
 
 def _etf_prefix(code: str) -> str:
-    """ETF代码转市场前缀：5开头→sh，1/3开头→sz"""
+    """ETF代码转市场前缀：5开头→sh(沪)，15/16开头→sz(深)"""
     return "sh" if code.startswith("5") else "sz"
 
 
