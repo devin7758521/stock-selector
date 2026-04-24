@@ -183,7 +183,29 @@ def _to_etf_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 
 # ─────────────────────────────────────────────────────────────
-# 1. 腾讯财经（多线程安全，前复权）
+# 1. AKShare-新浪（主力，数据最全3000+行，多线程安全）
+# ─────────────────────────────────────────────────────────────
+def _fetch_etf_akshare_sina(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    try:
+        import akshare as ak
+        prefix = _etf_prefix(code)
+        symbol = f"{prefix}{code}"
+        df = ak.fund_etf_hist_sina(symbol=symbol)
+        if df is not None and not df.empty:
+            # fund_etf_hist_sina 已返回 amount 列，无需估算
+            if "amount" not in df.columns:
+                df["amount"] = df["close"].astype(float) * df["volume"].astype(float)
+            df["date"] = pd.to_datetime(df["date"])
+            cutoff = datetime.today() - timedelta(days=days)
+            df = df[df["date"] >= cutoff]
+            return _to_etf_df(df)
+    except Exception as e:
+        logger.debug(f"[etf/akshare-sina] {code}: {e}")
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
+# 2. 腾讯财经（多线程安全，前复权，仅640行）
 # ─────────────────────────────────────────────────────────────
 def _fetch_etf_tencent(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
@@ -211,7 +233,7 @@ def _fetch_etf_tencent(code: str, days: int = 730) -> Optional[pd.DataFrame]:
 
 
 # ─────────────────────────────────────────────────────────────
-# 2. 东方财富HTTP（多线程安全，前复权）
+# 3. 东方财富HTTP（多线程安全，前复权）
 # ─────────────────────────────────────────────────────────────
 def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
@@ -244,7 +266,7 @@ def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
 
 
 # ─────────────────────────────────────────────────────────────
-# 3. Tushare（多线程安全，需token）
+# 4. Tushare（多线程安全，需token）
 # ─────────────────────────────────────────────────────────────
 _ts_pro = None
 
@@ -282,7 +304,7 @@ def _fetch_etf_tushare(code: str, token: str, days: int = 730) -> Optional[pd.Da
 
 
 # ─────────────────────────────────────────────────────────────
-# 4. 麦蕊（多线程安全，需token）
+# 5. 麦蕊（多线程安全，需token）
 # ─────────────────────────────────────────────────────────────
 def _fetch_etf_mairui(code: str, token: str, days: int = 730) -> Optional[pd.DataFrame]:
     if not token:
@@ -308,7 +330,7 @@ def _fetch_etf_mairui(code: str, token: str, days: int = 730) -> Optional[pd.Dat
 
 
 # ─────────────────────────────────────────────────────────────
-# 5. BaoStock（线程不安全，串行兜底）
+# 6. BaoStock（线程不安全，串行兜底）
 # ─────────────────────────────────────────────────────────────
 def _fetch_etf_baostock(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
@@ -336,26 +358,11 @@ def _fetch_etf_baostock(code: str, days: int = 730) -> Optional[pd.DataFrame]:
 
 
 # ─────────────────────────────────────────────────────────────
-# 6. AKShare（兜底）
+# 7. AKShare-东方财富（兜底，已知不稳定）
 # ─────────────────────────────────────────────────────────────
-def _fetch_etf_akshare(code: str, days: int = 730) -> Optional[pd.DataFrame]:
-    """AKShare ETF数据：优先新浪源(稳定)，降级东方财富源(已知不稳定)"""
+def _fetch_etf_akshare_em(code: str, days: int = 730) -> Optional[pd.DataFrame]:
+    """AKShare ETF数据：东方财富源（参照 wetchat_reminder 的调用方式）"""
     import akshare as ak
-    # 1. 新浪源：列名英文(date/open/high/low/close/volume)，无amount
-    try:
-        prefix = _etf_prefix(code)
-        symbol = f"{prefix}{code}"
-        df = ak.fund_etf_hist_sina(symbol=symbol)
-        if df is not None and not df.empty:
-            # fund_etf_hist_sina 无amount列，用close*volume估算
-            df["amount"] = df["close"].astype(float) * df["volume"].astype(float)
-            df["date"] = pd.to_datetime(df["date"])
-            cutoff = datetime.today() - timedelta(days=days)
-            df = df[df["date"] >= cutoff]
-            return _to_etf_df(df)
-    except Exception as e:
-        logger.debug(f"[etf/akshare-sina] {code}: {e}")
-    # 2. 东方财富源：参照 wetchat_reminder 的调用方式
     try:
         df = ak.fund_etf_hist_em(symbol=code, period="daily", adjust="qfq")
         if df is not None and not df.empty:
@@ -400,43 +407,44 @@ def _fetch_etf_sina(code: str, days: int = 730) -> Optional[pd.DataFrame]:
 # ─────────────────────────────────────────────────────────────
 def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[pd.DataFrame]:
     """
-    获取ETF日K线数据（7源轮换：腾讯→东方财富→tushare→麦蕊→BaoStock→akshare→新浪）
+    获取ETF日K线数据（8源轮换：akshare-sina→tencent→eastmoney→tushare→麦蕊→BaoStock→akshare-em→新浪）
 
-    多线程安全的数据源排前面，非安全的排后面串行兜底。
-    收盘后(16:00+)锁定东方财富主力源，避免轮换随机性导致结果不一致。
+    akshare-sina数据最全(3000+行)，排第一；腾讯/东方财富数据量少(640行)排后。
+    收盘后(16:00+)锁定akshare-sina主力源，避免轮换随机性导致结果不一致。
     """
     ds = (cfg or {}).get("datasources", {})
     tushare_token = ds.get("tushare_token", "")
     mairui_token = ds.get("mairui_token", "")
 
     mt_sources = [
-        ("tencent",   lambda: _fetch_etf_tencent(symbol, days)),
-        ("eastmoney", lambda: _fetch_etf_eastmoney(symbol, days)),
-        ("tushare",   lambda: _fetch_etf_tushare(symbol, tushare_token, days)),
-        ("mairui",    lambda: _fetch_etf_mairui(symbol, mairui_token, days)),
+        ("akshare-sina", lambda: _fetch_etf_akshare_sina(symbol, days)),
+        ("tencent",      lambda: _fetch_etf_tencent(symbol, days)),
+        ("eastmoney",    lambda: _fetch_etf_eastmoney(symbol, days)),
+        ("tushare",      lambda: _fetch_etf_tushare(symbol, tushare_token, days)),
+        ("mairui",       lambda: _fetch_etf_mairui(symbol, mairui_token, days)),
     ]
     st_sources = [
-        ("baostock",  lambda: _fetch_etf_baostock(symbol, days)),
-        ("akshare",   lambda: _fetch_etf_akshare(symbol, days)),
-        ("sina",      lambda: _fetch_etf_sina(symbol, days)),
+        ("baostock",     lambda: _fetch_etf_baostock(symbol, days)),
+        ("akshare-em",   lambda: _fetch_etf_akshare_em(symbol, days)),
+        ("sina",         lambda: _fetch_etf_sina(symbol, days)),
     ]
 
     import time, random as _random
     delay_min = (cfg or {}).get("request", {}).get("delay_min", 0.2)
     delay_max = (cfg or {}).get("request", {}).get("delay_max", 0.5)
 
-    # 收盘后(16:00+)锁定东方财富，避免轮换随机性
+    # 收盘后(16:00+)锁定akshare-sina，避免轮换随机性
     now = datetime.now()
     after_close = now.weekday() >= 5 or (now.weekday() < 5 and now.hour >= 16)
     if after_close:
         try:
             time.sleep(_random.uniform(delay_min, delay_max))
-            df = _fetch_etf_eastmoney(symbol, days)
+            df = _fetch_etf_akshare_sina(symbol, days)
             if df is not None and not df.empty:
-                logger.debug(f"[etf/eastmoney-locked] {symbol} ✓ (收盘后锁定)")
+                logger.debug(f"[etf/akshare-sina-locked] {symbol} OK (收盘后锁定)")
                 return df
         except Exception as e:
-            logger.debug(f"[etf/eastmoney-locked] {symbol} 异常: {e}，降级全量轮换")
+            logger.debug(f"[etf/akshare-sina-locked] {symbol} 异常: {e}，降级全量轮换")
 
     failed_sources = []
     for name, fn in mt_sources + st_sources:
