@@ -129,11 +129,22 @@ def _extract_index_key(name: str) -> str:
 
     例: "通信ETF国泰" → "通信"
         "沪深300ETF易方达" → "沪深300"
-        "中证500ETF" → "中证500"
+        "中证A500ETF国泰" → "A500"
+        "恒生科技指数ETF易方达" → "恒生科技"
         "创业板人工智能ETF华夏" → "创业板人工智能"
     """
     # 去掉ETF后缀及基金公司名
     s = re.sub(r'ETF[A-Za-z\u4e00-\u9fff]*$', '', name, flags=re.IGNORECASE)
+    # 去掉"指数"后缀（"恒生科技指数" → "恒生科技"）
+    s = re.sub(r'指数$', '', s)
+    # 去掉"中证"前缀统一为裸指数名（"中证A500" → "A500"，"中证500" → "500"）
+    # 但"中证"本身有意义时保留（如"中证2000"避免变成"2000"）
+    # 策略：如果去掉"中证"后仍以中文/字母开头，则去掉；纯数字则保留"中证"
+    m = re.match(r'^中证(.+)$', s)
+    if m:
+        rest = m.group(1)
+        if re.match(r'^[A-Za-z\u4e00-\u9fff]', rest):
+            s = rest  # "中证A500" → "A500", "中证白酒" → "白酒"
     s = re.sub(r'指数[AC]$', '', s)
     s = s.strip()
     return s if s else name
