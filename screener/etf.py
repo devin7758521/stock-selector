@@ -474,7 +474,6 @@ def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[
     return None
 
 
-
 # ─────────────────────────────────────────────────────────────
 # 场内ETF白名单（每指数唯一代码，按成交额优先选取）
 # 用于东方财富/akshare列表接口均失败时的兜底（如GitHub Actions IP被封）
