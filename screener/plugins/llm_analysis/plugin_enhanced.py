@@ -93,6 +93,18 @@ class LLMAnalysisPlugin(Plugin):
                 or os.environ.get("DEEPSEEK_API_KEY", "")
             )
 
+            deepseek_api_url = (
+                nested.get("deepseek_api_url")
+                or self.config.get("deepseek_api_url")
+                or os.environ.get("DEEPSEEK_API_URL", "")
+            )
+
+            gemini_api_url = (
+                nested.get("gemini_api_url")
+                or self.config.get("gemini_api_url")
+                or os.environ.get("GEMINI_API_URL", "")
+            )
+
             if api_key:
                 logger.info(f"主模型 API Key: ...{api_key[-4:] if len(api_key) > 4 else '****'}")
             if deepseek_api_key:
@@ -116,7 +128,9 @@ class LLMAnalysisPlugin(Plugin):
                 deepseek_api_key=deepseek_api_key,
                 sector_results=self.sector_results,
                 gemini_api_key_2=gemini_api_key_2,
-                gemini_model_2=gemini_model_2
+                gemini_model_2=gemini_model_2,
+                deepseek_api_url=deepseek_api_url,
+                gemini_api_url=gemini_api_url
             )
             self.search_service = SearchService(tavily_keys=tavily_keys if tavily_keys else None)
 

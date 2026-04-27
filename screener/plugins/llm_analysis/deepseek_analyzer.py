@@ -24,8 +24,8 @@ _GEMINI_MIN_INTERVAL = 4.0
 _GEMINI_MAX_INTERVAL = 30.0
 _GEMINI_429_THRESHOLD = 3
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+DEFAULT_DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+DEFAULT_GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 def _gemini_rate_limit_wait():
@@ -165,7 +165,9 @@ class LLMNewsAnalyzer:
                  fallback_model: Optional[str] = None,
                  deepseek_api_key: Optional[str] = None,
                  gemini_api_key_2: Optional[str] = None,
-                 gemini_model_2: Optional[str] = None):
+                 gemini_model_2: Optional[str] = None,
+                 deepseek_api_url: Optional[str] = None,
+                 gemini_api_url: Optional[str] = None):
         """
         初始化 LLM 新闻分析器
 
@@ -176,11 +178,15 @@ class LLMNewsAnalyzer:
             deepseek_api_key: DeepSeek 专用 API Key（用于 fallback）
             gemini_api_key_2: 第二个 Gemini API Key（降级备选）
             gemini_model_2: 第二个 Gemini 模型名称
+            deepseek_api_url: DeepSeek API URL
+            gemini_api_url: Gemini API URL
         """
         self.api_key = api_key
         self.model = model
         self.fallback_model = fallback_model
         self.model_name = model
+        self.deepseek_api_url = deepseek_api_url or DEFAULT_DEEPSEEK_API_URL
+        self.gemini_api_url = gemini_api_url or DEFAULT_GEMINI_API_URL
         if deepseek_api_key and deepseek_api_key.strip():
             self.deepseek_api_key = deepseek_api_key
         else:
@@ -364,7 +370,7 @@ class LLMNewsAnalyzer:
             "max_tokens": max_tokens,
         }
         response = requests.post(
-            DEEPSEEK_API_URL, headers=headers, json=payload, timeout=45
+            self.deepseek_api_url, headers=headers, json=payload, timeout=45
         )
         if response.status_code != 200:
             logger.error(
@@ -382,7 +388,7 @@ class LLMNewsAnalyzer:
 
     def _get_gemini_url(self) -> str:
         # 统一使用 v1beta 端点，v2beta 已废弃
-        base = "https://generativelanguage.googleapis.com/v1beta/models"
+        base = self.gemini_api_url
         return f"{base}/{self.model_name}:generateContent"
 
     def _synthesize_gemini(self, user_prompt: str, max_tokens: int) -> Optional[str]:
@@ -502,7 +508,7 @@ class LLMNewsAnalyzer:
                 success=False, error_message="DeepSeek API Key 未设置"
             )
 
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(self.deepseek_api_url, headers=headers, json=payload, timeout=30)
 
         if response.status_code != 200:
             logger.error(f"DeepSeek API 请求失败: {response.status_code} - {response.text}")
@@ -551,7 +557,7 @@ class LLMNewsAnalyzer:
 
 请进行深度分析并输出JSON格式结果。"""
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        url = f"{self.gemini_api_url}/{model}:generateContent?key={api_key}"
 
         payload = {
             "contents": [{

@@ -76,7 +76,7 @@ class EnhancedLLMAnalyzer:
     # 可调：低于该加权分则为 0 星（无星）
     WEIGHTED_SCORE_ZERO_STAR_BELOW: float = 32.0
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "local", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None, sector_results: Optional[List] = None, gemini_api_key_2: Optional[str] = None, gemini_model_2: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = "local", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None, sector_results: Optional[List] = None, gemini_api_key_2: Optional[str] = None, gemini_model_2: Optional[str] = None, deepseek_api_url: Optional[str] = None, gemini_api_url: Optional[str] = None):
         """
         初始化分析器
 
@@ -88,6 +88,8 @@ class EnhancedLLMAnalyzer:
             sector_results: 板块筛选结果（用于板块联动分析）
             gemini_api_key_2: 第二个 Gemini API Key（三级降级）
             gemini_model_2: 第二个 Gemini 模型名称
+            deepseek_api_url: DeepSeek API URL
+            gemini_api_url: Gemini API URL
         """
         self.api_key = api_key
         self.model = model
@@ -96,6 +98,8 @@ class EnhancedLLMAnalyzer:
         self.sector_results = sector_results or []
         self.gemini_api_key_2 = gemini_api_key_2
         self.gemini_model_2 = gemini_model_2
+        self.deepseek_api_url = deepseek_api_url
+        self.gemini_api_url = gemini_api_url
         self.model_used = f"Enhanced {model.upper()}" if model != "local" else "Enhanced Local Analyzer"
 
         self.llm_client = None
@@ -109,7 +113,9 @@ class EnhancedLLMAnalyzer:
                     fallback_model=fallback_model,
                     deepseek_api_key=deepseek_api_key,
                     gemini_api_key_2=gemini_api_key_2,
-                    gemini_model_2=gemini_model_2
+                    gemini_model_2=gemini_model_2,
+                    deepseek_api_url=deepseek_api_url,
+                    gemini_api_url=gemini_api_url
                 )
                 logger.info(f"已初始化LLMNewsAnalyzer新闻分析器 (主模型: {model}, 备用: {fallback_model})")
             except ImportError as e:
