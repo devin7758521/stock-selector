@@ -197,7 +197,7 @@ def search_akshare_market_news(days: int = 3, max_results: int = 10) -> List[New
                 df = func_call()
                 if df is not None and not df.empty and len(df) > 0:
                     count = 0
-                    for _, row in df.iterrows():
+                    for row in df.to_dict('records'):
                         if count >= max_results:
                             break
                         title = ""
