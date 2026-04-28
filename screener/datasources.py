@@ -50,6 +50,22 @@ def _to_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 # ─────────────────────────────────────────────────────────────
 # 实时行情快照（静态预筛用）
 # ─────────────────────────────────────────────────────────────
+
+def _normalize_amount(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "amount" not in df.columns:
+        return df
+
+    sample = df["amount"].median()
+    if pd.isna(sample) or sample == 0:
+        return df
+
+    if sample < 1e4:       # < 1万 -> unit is 亿元
+        df["amount"] = df["amount"] * 1e8
+    elif sample < 1e6:     # < 100万 -> unit is 万元
+        df["amount"] = df["amount"] * 1e4
+
+    return df
+
 def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
     """
     一次性获取全市场实时行情，返回 DataFrame(columns=["code","price","amount"])
@@ -74,6 +90,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
         df = df.dropna()
         if not df.empty:
+            df = _normalize_amount(df)
             logger.info(f"[spot/akshare] 实时快照: {len(df)} 只")
             return df
     except Exception as e:
@@ -122,6 +139,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
             df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
             df = df.dropna()
             if not df.empty:
+                df = _normalize_amount(df)
                 logger.info(f"[spot/eastmoney] 实时快照: {len(df)} 只")
                 return df
     except Exception as e:
@@ -144,6 +162,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
                     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
                     df = df.dropna()
                     if not df.empty:
+                        df = _normalize_amount(df)
                         logger.info(f"[spot/sina] 快照: {len(df)} 只")
                         return df
         except Exception:
@@ -195,6 +214,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
                 df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
                 df = df.dropna()
                 if not df.empty:
+                    df = _normalize_amount(df)
                     logger.info(f"[spot/hist] 最近收盘数据: {len(df)} 只")
                     return df
         except Exception as e:
@@ -232,6 +252,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
                     time.sleep(0.5)
             if results:
                 df = pd.DataFrame(results)
+                df = _normalize_amount(df)
                 logger.info(f"[spot/kline] 最近收盘数据: {len(df)} 只")
                 return df
     except Exception as e:
