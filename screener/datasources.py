@@ -1,16 +1,23 @@
-"""
+# “””
 datasources.py
-==============
+
 数据源设计原则：
+
 - 股票列表：baostock 单线程获取（最稳定）
-- 实时快照：东方财富 HTTP（预筛价格/成交额）
+- 实时快照：新浪 hq.sinajs.cn CDN（主力，GitHub Actions 不封 IP）
+  → 东方财富 HTTP → akshare 依次降级
 - 日K数据：东方财富为主力（多线程安全），新浪/腾讯备用，baostock/akshare最后兜底（串行）
 
 多线程安全说明：
-  东方财富/新浪/腾讯/tushare/mairui  ✅ 纯HTTP无状态，多线程安全
-  baostock                           ❌ 全局session，多线程会串数据，只用于单线程场景
-  akshare                            ⚠️ 底层不稳定，放最后兜底
-"""
+东方财富/新浪/腾讯/tushare/mairui  ✅ 纯HTTP无状态，多线程安全
+baostock                           ❌ 全局session，多线程会串数据，只用于单线程场景
+akshare                            ⚠️ 底层不稳定，放最后兜底
+
+实时快照数据源选型说明：
+hq.sinajs.cn  ✅ 消费者 CDN，GitHub Actions 不封，amount 字段直接为元，无需归一化
+东方财富       ❌ 封 GitHub Actions IP 段
+新浪 akshare  ⚠️ 底层同为新浪但走 akshare 封装，不稳定
+“””
 
 import time
 import random
@@ -24,81 +31,247 @@ import requests
 
 from screener.utils import random_headers
 
-logger = logging.getLogger("stock_selector.datasources")
+logger = logging.getLogger(“stock_selector.datasources”)
 
-_COLS = ["date", "open", "high", "low", "close", "volume", "amount"]
-
+_COLS = [“date”, “open”, “high”, “low”, “close”, “volume”, “amount”]
 
 def _start_date() -> str:
-    return (datetime.today() - timedelta(days=730)).strftime("%Y%m%d")
-
+return (datetime.today() - timedelta(days=730)).strftime(”%Y%m%d”)
 
 def _to_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """标准化并校验 DataFrame，少于200条视为无效"""
-    if df is None or df.empty:
-        return None
-    df = df[_COLS].copy()
-    df["date"] = pd.to_datetime(df["date"])
-    for c in ["open", "high", "low", "close", "volume", "amount"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    # 验证成交额数据：确保amount为正数且合理
-    df = df[df["amount"] > 0]
-    df = df.dropna().sort_values("date").reset_index(drop=True)
-    return df if len(df) >= 200 else None
-
+“”“标准化并校验 DataFrame，少于200条视为无效”””
+if df is None or df.empty:
+return None
+df = df[_COLS].copy()
+df[“date”] = pd.to_datetime(df[“date”])
+for c in [“open”, “high”, “low”, “close”, “volume”, “amount”]:
+df[c] = pd.to_numeric(df[c], errors=“coerce”)
+# 验证成交额数据：确保amount为正数且合理
+df = df[df[“amount”] > 0]
+df = df.dropna().sort_values(“date”).reset_index(drop=True)
+return df if len(df) >= 200 else None
 
 # ─────────────────────────────────────────────────────────────
+
 # 实时行情快照（静态预筛用）
+
 # ─────────────────────────────────────────────────────────────
 
 def _normalize_amount(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or "amount" not in df.columns:
-        return df
+if df.empty or “amount” not in df.columns:
+return df
 
-    sample = df["amount"].median()
-    if pd.isna(sample) or sample == 0:
-        return df
-
-    if sample < 1e4:       # < 1万 -> unit is 亿元
-        df["amount"] = df["amount"] * 1e8
-    elif sample < 1e6:     # < 100万 -> unit is 万元
-        df["amount"] = df["amount"] * 1e4
-
+```
+sample = df["amount"].median()
+if pd.isna(sample) or sample == 0:
     return df
 
-def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
-    """
-    一次性获取全市场实时行情，返回 DataFrame(columns=["code","price","amount"])
-    交易时间：优先实时数据
-    非交易时间：使用最近交易日收盘数据
-    失败返回 None，主流程会降级为逐只判断
-    """
-    now = datetime.now()
-    is_trading_hour = (
-        now.weekday() < 5
-        and ((now.hour == 9 and now.minute >= 30) or (10 <= now.hour <= 14))
-    )
+if sample < 1e4:       # < 1万 -> unit is 亿元
+    df["amount"] = df["amount"] * 1e8
+elif sample < 1e6:     # < 100万 -> unit is 万元
+    df["amount"] = df["amount"] * 1e4
 
-    # 1. akshare 东方财富实时行情
+return df
+```
+
+def _fetch_spot_sina_cdn(codes: list) -> Optional[pd.DataFrame]:
+“””
+新浪 hq.sinajs.cn CDN 批量实时快照。
+─ GitHub Actions 不封 IP（消费者 CDN）
+─ amount 字段 index=9，单位直接为元，无需 _normalize_amount 猜单位
+─ 每批最多 800 只，约 7 个请求覆盖全市场 5000+ 只
+
+```
+新浪行情字段顺序（逗号分隔）：
+  0=股票名称, 1=今日开盘, 2=昨日收盘, 3=当前价, 4=最高, 5=最低,
+  6=买一, 7=卖一, 8=成交量(手), 9=成交额(元), 10~=买卖盘口...
+"""
+import re
+
+def _to_sina_code(code: str) -> str:
+    return f"sh{code}" if code.startswith(("6", "9")) else f"sz{code}"
+
+sina_codes = [_to_sina_code(c) for c in codes]
+batch_size = 800
+results = []
+
+for i in range(0, len(sina_codes), batch_size):
+    batch = sina_codes[i: i + batch_size]
+    url = f"http://hq.sinajs.cn/list={','.join(batch)}"
     try:
-        import akshare as ak
-        df = ak.stock_zh_a_spot_em()
-        df = df[["代码", "最新价", "成交额"]].rename(columns={
-            "代码": "code", "最新价": "price", "成交额": "amount"
-        })
+        resp = requests.get(
+            url,
+            headers={
+                "Referer":    "https://finance.sina.com.cn",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 Chrome/124.0 Safari/537.36",
+            },
+            timeout=15,
+        )
+        resp.encoding = "gbk"
+        for line in resp.text.strip().split("\n"):
+            m = re.match(r'var hq_str_(\w{8})="([^"]*)"', line)
+            if not m:
+                continue
+            fields = m.group(2).split(",")
+            # 停牌/退市/未开盘时返回空字符串
+            if len(fields) < 10 or not fields[0]:
+                continue
+            try:
+                price  = float(fields[3])
+                amount = float(fields[9])
+                if price > 0 and amount >= 0:
+                    results.append({
+                        "code":   m.group(1)[2:],   # 去掉 sh/sz 前缀
+                        "price":  price,
+                        "amount": amount,            # 已是元，不需归一化
+                    })
+            except (ValueError, IndexError):
+                continue
+    except Exception as e:
+        logger.debug(f"[spot/sina_cdn] batch {i // batch_size + 1} 失败: {e}")
+        continue
+    time.sleep(0.2)
+
+if not results:
+    return None
+
+df = pd.DataFrame(results)
+logger.info(
+    f"[spot/sina_cdn] 实时快照: {len(df)} 只"
+    f"（amount 单位: 元，覆盖率: {len(df)}/{len(codes)} = {len(df)/max(len(codes),1):.1%}）"
+)
+return df
+```
+
+def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
+“””
+一次性获取全市场实时行情，返回 DataFrame(columns=[“code”,“price”,“amount”])
+交易时间：优先实时数据
+非交易时间：使用最近交易日收盘数据
+失败返回 None，主流程会降级为逐只判断
+
+```
+数据源优先级：
+  0. 新浪 CDN (hq.sinajs.cn) — GitHub Actions 不封，全市场，amount 直接为元 ← 主力
+  1. akshare 东方财富          — 本地运行备用，GitHub Actions 被封
+  2. 东方财富直接 HTTP          — 同上
+  3. 新浪 akshare 封装          — 备用
+  4. 东方财富历史（非交易时间）  — 非交易时间兜底
+  5. kline 兜底（前200只）      — 最后手段，覆盖率低，仅供紧急降级
+"""
+now = datetime.now()
+is_trading_hour = (
+    now.weekday() < 5
+    and ((now.hour == 9 and now.minute >= 30) or (10 <= now.hour <= 14))
+)
+
+# 0. 新浪 CDN —— 主力，GitHub Actions 不封 IP ──────────────
+try:
+    stock_list = fetch_stock_list(cfg)
+    if stock_list is not None and not stock_list.empty:
+        codes = stock_list["code"].tolist()
+        df = _fetch_spot_sina_cdn(codes)
+        if df is not None and not df.empty:
+            return df
+except Exception as e:
+    logger.debug(f"[spot/sina_cdn] 失败: {e}")
+
+# 1. akshare 东方财富实时行情
+try:
+    import akshare as ak
+    df = ak.stock_zh_a_spot_em()
+    df = df[["代码", "最新价", "成交额"]].rename(columns={
+        "代码": "code", "最新价": "price", "成交额": "amount"
+    })
+    df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    df = df.dropna()
+    if not df.empty:
+        df = _normalize_amount(df)
+        logger.info(f"[spot/akshare] 实时快照: {len(df)} 只")
+        return df
+except Exception as e:
+    logger.debug(f"[spot/akshare] 失败: {e}")
+
+# 2. 东方财富直接HTTP（分页获取全量）
+try:
+    import time as _time
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    base_params = {
+        "po": "1", "np": "1",
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": "2", "invt": "2", "fid": "f3",
+        "fs": "m:0+t:6,m:0+t:13,m:1+t:2,m:1+t:23",
+        "fields": "f12,f2,f6",
+    }
+    all_items = []
+    page = 1
+    while True:
+        params = {**base_params, "pn": str(page), "pz": "5000"}
+        for retry in range(3):
+            try:
+                resp = requests.get(url, params=params, headers=random_headers(), timeout=20)
+                resp.raise_for_status()
+                break
+            except Exception:
+                if retry < 2:
+                    _time.sleep(1)
+                else:
+                    raise
+        data = resp.json().get("data", {})
+        items = data.get("diff", [])
+        if not items:
+            break
+        all_items.extend(items)
+        total = data.get("total", 0)
+        if len(all_items) >= total or len(items) < 5000:
+            break
+        page += 1
+        _time.sleep(0.5)
+    if all_items:
+        df = pd.DataFrame([{
+            "code": i["f12"], "price": i["f2"], "amount": i["f6"]
+        } for i in all_items])
         df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
         df = df.dropna()
         if not df.empty:
             df = _normalize_amount(df)
-            logger.info(f"[spot/akshare] 实时快照: {len(df)} 只")
+            logger.info(f"[spot/eastmoney] 实时快照: {len(df)} 只")
             return df
-    except Exception as e:
-        logger.debug(f"[spot/akshare] 失败: {e}")
+except Exception as e:
+    logger.debug(f"[spot/eastmoney] 失败: {e}")
 
-    # 2. 东方财富直接HTTP（分页获取全量）
+# 3. 新浪实时行情（非交易时间返回最近收盘价）
+try:
+    import akshare as ak
     try:
-        import time as _time
+        df = ak.stock_zh_a_spot()
+        if df is not None and not df.empty:
+            col_map = {}
+            for c in df.columns:
+                if "代码" in c: col_map[c] = "code"
+                elif "现价" in c or "最新" in c: col_map[c] = "price"
+                elif "成交额" in c or "金额" in c: col_map[c] = "amount"
+            if "code" in col_map and "price" in col_map:
+                df = df.rename(columns=col_map)[["code", "price", "amount"]]
+                df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
+                df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+                df = df.dropna()
+                if not df.empty:
+                    df = _normalize_amount(df)
+                    logger.info(f"[spot/sina] 快照: {len(df)} 只")
+                    return df
+    except Exception:
+        pass
+except Exception as e:
+    logger.debug(f"[spot/sina] 失败: {e}")
+
+# 4. 非交易时间：东方财富历史行情接口（返回最近收盘数据，无需逐只请求）
+if not is_trading_hour:
+    try:
+        logger.info("[spot/hist] 非交易时间，尝试获取最近收盘数据")
         url = "https://push2.eastmoney.com/api/qt/clist/get"
         base_params = {
             "po": "1", "np": "1",
@@ -118,7 +291,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
                     break
                 except Exception:
                     if retry < 2:
-                        _time.sleep(1)
+                        time.sleep(2)
                     else:
                         raise
             data = resp.json().get("data", {})
@@ -130,7 +303,7 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
             if len(all_items) >= total or len(items) < 5000:
                 break
             page += 1
-            _time.sleep(0.5)
+            time.sleep(1)
         if all_items:
             df = pd.DataFrame([{
                 "code": i["f12"], "price": i["f2"], "amount": i["f6"]
@@ -140,510 +313,463 @@ def fetch_spot_data(cfg: dict) -> Optional[pd.DataFrame]:
             df = df.dropna()
             if not df.empty:
                 df = _normalize_amount(df)
-                logger.info(f"[spot/eastmoney] 实时快照: {len(df)} 只")
+                logger.info(f"[spot/hist] 最近收盘数据: {len(df)} 只")
                 return df
     except Exception as e:
-        logger.debug(f"[spot/eastmoney] 失败: {e}")
+        logger.debug(f"[spot/hist] 失败: {e}")
 
-    # 3. 新浪实时行情（非交易时间返回最近收盘价）
-    try:
-        import akshare as ak
-        try:
-            df = ak.stock_zh_a_spot()
-            if df is not None and not df.empty:
-                col_map = {}
-                for c in df.columns:
-                    if "代码" in c: col_map[c] = "code"
-                    elif "现价" in c or "最新" in c: col_map[c] = "price"
-                    elif "成交额" in c or "金额" in c: col_map[c] = "amount"
-                if "code" in col_map and "price" in col_map:
-                    df = df.rename(columns=col_map)[["code", "price", "amount"]]
-                    df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
-                    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-                    df = df.dropna()
-                    if not df.empty:
-                        df = _normalize_amount(df)
-                        logger.info(f"[spot/sina] 快照: {len(df)} 只")
-                        return df
-        except Exception:
-            pass
-    except Exception as e:
-        logger.debug(f"[spot/sina] 失败: {e}")
-
-    # 4. 非交易时间：东方财富历史行情接口（返回最近收盘数据，无需逐只请求）
-    if not is_trading_hour:
-        try:
-            logger.info("[spot/hist] 非交易时间，尝试获取最近收盘数据")
-            url = "https://push2.eastmoney.com/api/qt/clist/get"
-            base_params = {
-                "po": "1", "np": "1",
-                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-                "fltt": "2", "invt": "2", "fid": "f3",
-                "fs": "m:0+t:6,m:0+t:13,m:1+t:2,m:1+t:23",
-                "fields": "f12,f2,f6",
-            }
-            all_items = []
-            page = 1
-            while True:
-                params = {**base_params, "pn": str(page), "pz": "5000"}
-                for retry in range(3):
-                    try:
-                        resp = requests.get(url, params=params, headers=random_headers(), timeout=20)
-                        resp.raise_for_status()
-                        break
-                    except Exception:
-                        if retry < 2:
-                            time.sleep(2)
-                        else:
-                            raise
-                data = resp.json().get("data", {})
-                items = data.get("diff", [])
-                if not items:
-                    break
-                all_items.extend(items)
-                total = data.get("total", 0)
-                if len(all_items) >= total or len(items) < 5000:
-                    break
-                page += 1
-                time.sleep(1)
-            if all_items:
-                df = pd.DataFrame([{
-                    "code": i["f12"], "price": i["f2"], "amount": i["f6"]
-                } for i in all_items])
-                df["price"]  = pd.to_numeric(df["price"],  errors="coerce")
-                df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-                df = df.dropna()
-                if not df.empty:
-                    df = _normalize_amount(df)
-                    logger.info(f"[spot/hist] 最近收盘数据: {len(df)} 只")
-                    return df
-        except Exception as e:
-            logger.debug(f"[spot/hist] 失败: {e}")
-
-    # 5. 最后兜底：从股票列表+日K获取（仅取前200只，避免太慢）
-    try:
-        logger.info("[spot/kline] 兜底方案：批量获取日K最近收盘数据")
-        stock_list = fetch_stock_list(cfg)
-        if stock_list is not None and not stock_list.empty:
-            results = []
-            codes = stock_list["code"].tolist()[:200]
-            url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-            for code in codes:
-                try:
-                    secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
-                    params = {
-                        "secid": secid, "fields1": "f1,f2,f3",
-                        "fields2": "f51,f52,f53,f54,f55,f56,f57",
-                        "ut": "fa5fd1943c7b386f172d6893dbfba10b",
-                        "klt": "101", "fqt": "1", "end": "20991231", "lmt": "3",
-                    }
-                    resp = requests.get(url, params=params, headers=random_headers(), timeout=5)
-                    klines = (resp.json().get("data") or {}).get("klines", [])
-                    if klines:
-                        last = klines[-1].split(",")
-                        results.append({
-                            "code": code,
-                            "price": float(last[2]),
-                            "amount": float(last[6]),
-                        })
-                except Exception:
-                    continue
-                if len(results) % 50 == 0:
-                    time.sleep(0.5)
-            if results:
-                df = pd.DataFrame(results)
-                df = _normalize_amount(df)
-                logger.info(f"[spot/kline] 最近收盘数据: {len(df)} 只")
-                return df
-    except Exception as e:
-        logger.debug(f"[spot/kline] 失败: {e}")
-
-    logger.warning("实时快照获取失败，跳过预筛，后续逐只判断价格/成交额")
-    return None
-
-
-# ─────────────────────────────────────────────────────────────
-# 股票列表（baostock 单线程，过滤退市）
-# ─────────────────────────────────────────────────────────────
-def fetch_stock_list(cfg: dict) -> Optional[pd.DataFrame]:
-    """
-    返回 DataFrame(columns=["code","name","list_date"])
-    只返回当前在市普通A股
-    """
-    ds = cfg.get("datasources", {})
-
-    # 1. baostock — 单线程最稳定，明确过滤退市
-    try:
-        import baostock as bs
-        bs.login()
-        rs = bs.query_stock_basic()
-        rows = []
-        while rs.error_code == "0" and rs.next():
-            rows.append(rs.get_row_data())
-        bs.logout()
-        df = pd.DataFrame(rows, columns=rs.fields)
-        df = df[(df["type"] == "1") & (df["status"] == "1")]
-        df["code"] = df["code"].str[-6:]
-        df = df.rename(columns={"code_name": "name", "ipoDate": "list_date"})[
-            ["code", "name", "list_date"]
-        ]
-        df["list_date"] = df["list_date"].str.replace("-", "")
-        if not df.empty:
-            logger.info(f"[baostock] 股票列表: {len(df)} 只（已过滤退市）")
-            return df
-    except Exception as e:
-        logger.warning(f"[baostock] 股票列表失败: {e}")
-
-    # 2. akshare 兜底
-    try:
-        import akshare as ak
-        df = ak.stock_info_a_code_name()
-        df.columns = ["code", "name"]
-        try:
-            info = ak.stock_zh_a_spot_em()[["代码", "上市时间"]].rename(
-                columns={"代码": "code", "上市时间": "list_date"}
+# 5. 最后兜底：从股票列表+日K获取（仅取前200只，避免太慢）
+try:
+    logger.info("[spot/kline] 兜底方案：批量获取日K最近收盘数据")
+    stock_list = fetch_stock_list(cfg)
+    if stock_list is not None and not stock_list.empty:
+        results = []
+        codes = stock_list["code"].tolist()[:200]
+        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        for code in codes:
+            try:
+                secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
+                params = {
+                    "secid": secid, "fields1": "f1,f2,f3",
+                    "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                    "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+                    "klt": "101", "fqt": "1", "end": "20991231", "lmt": "3",
+                }
+                resp = requests.get(url, params=params, headers=random_headers(), timeout=5)
+                klines = (resp.json().get("data") or {}).get("klines", [])
+                if klines:
+                    last = klines[-1].split(",")
+                    results.append({
+                        "code": code,
+                        "price": float(last[2]),
+                        "amount": float(last[6]),
+                    })
+            except Exception:
+                continue
+            if len(results) % 50 == 0:
+                time.sleep(0.5)
+        if results:
+            df = pd.DataFrame(results)
+            df = _normalize_amount(df)
+            logger.warning(
+                f"[spot/kline] 兜底快照: {len(df)} 只"
+                f"（仅前200只！覆盖率极低，预筛可能被跳过，建议检查前序数据源是否被封 IP）"
             )
-            info["list_date"] = info["list_date"].astype(str).str.replace("-", "")
-            df = df.merge(info, on="code", how="left")
-        except Exception:
-            df["list_date"] = "20000101"
+            return df
+except Exception as e:
+    logger.debug(f"[spot/kline] 失败: {e}")
+
+logger.warning("实时快照获取失败，跳过预筛，后续逐只判断价格/成交额")
+return None
+```
+
+# ─────────────────────────────────────────────────────────────
+
+# 股票列表（baostock 单线程，过滤退市）
+
+# ─────────────────────────────────────────────────────────────
+
+def fetch_stock_list(cfg: dict) -> Optional[pd.DataFrame]:
+“””
+返回 DataFrame(columns=[“code”,“name”,“list_date”])
+只返回当前在市普通A股
+“””
+ds = cfg.get(“datasources”, {})
+
+```
+# 1. baostock — 单线程最稳定，明确过滤退市
+try:
+    import baostock as bs
+    bs.login()
+    rs = bs.query_stock_basic()
+    rows = []
+    while rs.error_code == "0" and rs.next():
+        rows.append(rs.get_row_data())
+    bs.logout()
+    df = pd.DataFrame(rows, columns=rs.fields)
+    df = df[(df["type"] == "1") & (df["status"] == "1")]
+    df["code"] = df["code"].str[-6:]
+    df = df.rename(columns={"code_name": "name", "ipoDate": "list_date"})[
+        ["code", "name", "list_date"]
+    ]
+    df["list_date"] = df["list_date"].str.replace("-", "")
+    if not df.empty:
+        logger.info(f"[baostock] 股票列表: {len(df)} 只（已过滤退市）")
+        return df
+except Exception as e:
+    logger.warning(f"[baostock] 股票列表失败: {e}")
+
+# 2. akshare 兜底
+try:
+    import akshare as ak
+    df = ak.stock_info_a_code_name()
+    df.columns = ["code", "name"]
+    try:
+        info = ak.stock_zh_a_spot_em()[["代码", "上市时间"]].rename(
+            columns={"代码": "code", "上市时间": "list_date"}
+        )
+        info["list_date"] = info["list_date"].astype(str).str.replace("-", "")
+        df = df.merge(info, on="code", how="left")
+    except Exception:
+        df["list_date"] = "20000101"
+    if not df.empty:
+        logger.info(f"[akshare] 股票列表: {len(df)} 只")
+        return df
+except Exception as e:
+    logger.warning(f"[akshare] 股票列表失败: {e}")
+
+# 3. tushare
+token = ds.get("tushare_token", "")
+if token and _init_tushare(token):
+    try:
+        df = _ts_pro.stock_basic(exchange="", list_status="L",
+                                 fields="ts_code,name,list_date")
+        df["code"] = df["ts_code"].str[:6]
+        df = df[["code", "name", "list_date"]]
         if not df.empty:
-            logger.info(f"[akshare] 股票列表: {len(df)} 只")
+            logger.info(f"[tushare] 股票列表: {len(df)} 只")
             return df
     except Exception as e:
-        logger.warning(f"[akshare] 股票列表失败: {e}")
+        logger.warning(f"[tushare] 股票列表失败: {e}")
 
-    # 3. tushare
-    token = ds.get("tushare_token", "")
-    if token and _init_tushare(token):
-        try:
-            df = _ts_pro.stock_basic(exchange="", list_status="L",
-                                     fields="ts_code,name,list_date")
-            df["code"] = df["ts_code"].str[:6]
-            df = df[["code", "name", "list_date"]]
-            if not df.empty:
-                logger.info(f"[tushare] 股票列表: {len(df)} 只")
-                return df
-        except Exception as e:
-            logger.warning(f"[tushare] 股票列表失败: {e}")
-
-    logger.error("所有数据源均无法获取股票列表")
-    return None
-
+logger.error("所有数据源均无法获取股票列表")
+return None
+```
 
 # ─────────────────────────────────────────────────────────────
+
 # 1. 东方财富（主力，多线程安全）
-# ─────────────────────────────────────────────────────────────
-def _em_secid(code: str) -> str:
-    return f"1.{code}" if code.startswith("6") else f"0.{code}"
 
+# ─────────────────────────────────────────────────────────────
+
+def _em_secid(code: str) -> str:
+return f”1.{code}” if code.startswith(“6”) else f”0.{code}”
 
 def _fetch_eastmoney(code: str) -> Optional[pd.DataFrame]:
-    try:
-        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-        params = {
-            "secid":   _em_secid(code),
-            "fields1": "f1,f2,f3,f4,f5,f6",
-            "fields2": "f51,f52,f53,f54,f55,f56,f57",
-            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
-            "klt": "101", "fqt": "1",
-            "beg": _start_date(), "end": "20991231", "lmt": "1000",
-        }
-        resp = requests.get(url, params=params, headers=random_headers(), timeout=10)
-        resp.raise_for_status()
-        klines = (resp.json().get("data") or {}).get("klines", [])
-        if not klines:
-            return None
-        rows = []
-        for k in klines:
-            p = k.split(",")
-            rows.append({
-                "date": p[0], "open": p[1], "close": p[2],
-                "high": p[3], "low":  p[4], "volume": p[5], "amount": p[6],
-            })
-        return _to_df(pd.DataFrame(rows)[_COLS])
-    except Exception as e:
-        logger.debug(f"[eastmoney] {code}: {e}")
-        return None
-
+try:
+url = “https://push2his.eastmoney.com/api/qt/stock/kline/get”
+params = {
+“secid”:   _em_secid(code),
+“fields1”: “f1,f2,f3,f4,f5,f6”,
+“fields2”: “f51,f52,f53,f54,f55,f56,f57”,
+“ut”: “fa5fd1943c7b386f172d6893dbfba10b”,
+“klt”: “101”, “fqt”: “1”,
+“beg”: _start_date(), “end”: “20991231”, “lmt”: “1000”,
+}
+resp = requests.get(url, params=params, headers=random_headers(), timeout=10)
+resp.raise_for_status()
+klines = (resp.json().get(“data”) or {}).get(“klines”, [])
+if not klines:
+return None
+rows = []
+for k in klines:
+p = k.split(”,”)
+rows.append({
+“date”: p[0], “open”: p[1], “close”: p[2],
+“high”: p[3], “low”:  p[4], “volume”: p[5], “amount”: p[6],
+})
+return _to_df(pd.DataFrame(rows)[_COLS])
+except Exception as e:
+logger.debug(f”[eastmoney] {code}: {e}”)
+return None
 
 # ─────────────────────────────────────────────────────────────
+
 # 2. 新浪财经（多线程安全）
+
 # ─────────────────────────────────────────────────────────────
+
 def _fetch_sina(code: str) -> Optional[pd.DataFrame]:
-    """
-    新浪此接口返回前复权数据（经多方验证，getKLineData默认返回前复权）。
-    仅作为最后兜底使用，优先级低于东方财富/baostock/腾讯。
-    """
-    try:
-        prefix = "sh" if code.startswith("6") else "sz"
-        url = (
-            "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php"
-            "/CN_MarketData.getKLineData"
-        )
-        params = {"symbol": f"{prefix}{code}", "scale": 240, "ma": "no", "datalen": 730}
-        resp = requests.get(url, params=params, headers=random_headers(), timeout=10)
-        resp.raise_for_status()
-        raw = json.loads(resp.text)
-        if not raw:
-            return None
-        rows = [{
-            "date": r["day"], "open": r["open"], "high": r["high"],
-            "low": r["low"], "close": r["close"], "volume": r["volume"],
-            "amount": float(r.get("amount", 0)) * 10000,
-        } for r in raw]
-        return _to_df(pd.DataFrame(rows)[_COLS])
-    except Exception as e:
-        logger.debug(f"[sina] {code}: {e}")
-        return None
-
+“””
+新浪此接口返回前复权数据（经多方验证，getKLineData默认返回前复权）。
+仅作为最后兜底使用，优先级低于东方财富/baostock/腾讯。
+“””
+try:
+prefix = “sh” if code.startswith(“6”) else “sz”
+url = (
+“https://money.finance.sina.com.cn/quotes_service/api/json_v2.php”
+“/CN_MarketData.getKLineData”
+)
+params = {“symbol”: f”{prefix}{code}”, “scale”: 240, “ma”: “no”, “datalen”: 730}
+resp = requests.get(url, params=params, headers=random_headers(), timeout=10)
+resp.raise_for_status()
+raw = json.loads(resp.text)
+if not raw:
+return None
+rows = [{
+“date”: r[“day”], “open”: r[“open”], “high”: r[“high”],
+“low”: r[“low”], “close”: r[“close”], “volume”: r[“volume”],
+“amount”: float(r.get(“amount”, 0)) * 10000,
+} for r in raw]
+return _to_df(pd.DataFrame(rows)[_COLS])
+except Exception as e:
+logger.debug(f”[sina] {code}: {e}”)
+return None
 
 # ─────────────────────────────────────────────────────────────
+
 # 3. 腾讯财经（多线程安全，amount 为近似值）
+
 # ─────────────────────────────────────────────────────────────
+
 def _fetch_tencent(code: str) -> Optional[pd.DataFrame]:
-    try:
-        prefix = "sh" if code.startswith("6") else "sz"
-        key = f"{prefix}{code}"
-        url = (
-            f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-            f"?_var=kline_dayqfq&param={key},day,,,640,qfq"
-        )
-        resp = requests.get(url, headers=random_headers(), timeout=10)
-        resp.raise_for_status()
-        text = resp.text.strip()
-        text = text[text.index("{"):]
-        days = json.loads(text).get("data", {}).get(key, {}).get("qfqday", [])
-        if not days:
-            return None
-        rows = [{
-            "date": d[0], "open": d[1], "close": d[2],
-            "high": d[3], "low": d[4], "volume": float(d[5]) * 100,  # 腾讯财经成交量单位是手，转换为股
-            "amount": float(d[2]) * float(d[5]) * 100,  # 腾讯财经成交量单位是手，转换为股
-        } for d in days]
-        return _to_df(pd.DataFrame(rows)[_COLS])
-    except Exception as e:
-        logger.debug(f"[tencent] {code}: {e}")
-        return None
-
+try:
+prefix = “sh” if code.startswith(“6”) else “sz”
+key = f”{prefix}{code}”
+url = (
+f”https://web.ifzq.gtimg.cn/appstock/app/fqkline/get”
+f”?_var=kline_dayqfq&param={key},day,,,640,qfq”
+)
+resp = requests.get(url, headers=random_headers(), timeout=10)
+resp.raise_for_status()
+text = resp.text.strip()
+text = text[text.index(”{”):]
+days = json.loads(text).get(“data”, {}).get(key, {}).get(“qfqday”, [])
+if not days:
+return None
+rows = [{
+“date”: d[0], “open”: d[1], “close”: d[2],
+“high”: d[3], “low”: d[4], “volume”: float(d[5]) * 100,  # 腾讯财经成交量单位是手，转换为股
+“amount”: float(d[2]) * float(d[5]) * 100,  # 腾讯财经成交量单位是手，转换为股
+} for d in days]
+return _to_df(pd.DataFrame(rows)[_COLS])
+except Exception as e:
+logger.debug(f”[tencent] {code}: {e}”)
+return None
 
 # ─────────────────────────────────────────────────────────────
+
 # 4. Tushare（多线程安全，需要token）
+
 # ─────────────────────────────────────────────────────────────
+
 _ts_pro = None
 
-
 def _init_tushare(token: str) -> bool:
-    global _ts_pro
-    if _ts_pro is not None:
-        return True
-    if not token:
-        return False
-    try:
-        import tushare as ts
-        ts.set_token(token)
-        _ts_pro = ts.pro_api()
-        return True
-    except Exception as e:
-        logger.debug(f"[tushare] 初始化失败: {e}")
-        return False
-
+global _ts_pro
+if _ts_pro is not None:
+return True
+if not token:
+return False
+try:
+import tushare as ts
+ts.set_token(token)
+_ts_pro = ts.pro_api()
+return True
+except Exception as e:
+logger.debug(f”[tushare] 初始化失败: {e}”)
+return False
 
 def _fetch_tushare(code: str, token: str) -> Optional[pd.DataFrame]:
-    if not _init_tushare(token):
-        return None
-    try:
-        ts_code = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
-        df = _ts_pro.daily(ts_code=ts_code, start_date=_start_date())
-        if df is None or df.empty:
-            return None
-        df = df.rename(columns={"trade_date": "date", "vol": "volume"})
-        df["amount"] = df["amount"] * 1000
-        return _to_df(df[_COLS])
-    except Exception as e:
-        logger.debug(f"[tushare] {code}: {e}")
-        return None
-
+if not _init_tushare(token):
+return None
+try:
+ts_code = f”{code}.SH” if code.startswith(“6”) else f”{code}.SZ”
+df = _ts_pro.daily(ts_code=ts_code, start_date=_start_date())
+if df is None or df.empty:
+return None
+df = df.rename(columns={“trade_date”: “date”, “vol”: “volume”})
+df[“amount”] = df[“amount”] * 1000
+return _to_df(df[_COLS])
+except Exception as e:
+logger.debug(f”[tushare] {code}: {e}”)
+return None
 
 # ─────────────────────────────────────────────────────────────
+
 # 5. 麦蕊（多线程安全，需要token）
+
 # ─────────────────────────────────────────────────────────────
+
 def _fetch_mairui(code: str, token: str) -> Optional[pd.DataFrame]:
-    if not token:
-        return None
-    try:
-        url = f"http://api.mairui.club/hszbl/fsjy/{code}/dn/{token}"
-        resp = requests.get(url, headers=random_headers(), timeout=10)
-        resp.raise_for_status()
-        raw = resp.json()
-        if not raw:
-            return None
-        rows = [{
-            "date": r["d"], "open": r["o"], "high": r["h"], "low": r["l"],
-            "close": r["c"], "volume": r["v"],
-            "amount": r.get("e", float(r["c"]) * float(r["v"])),
-        } for r in raw]
-        df = pd.DataFrame(rows)[_COLS]
-        df["date"] = pd.to_datetime(df["date"])
-        return _to_df(df[df["date"] >= datetime.today() - timedelta(days=730)])
-    except Exception as e:
-        logger.debug(f"[mairui] {code}: {e}")
-        return None
-
+if not token:
+return None
+try:
+url = f”http://api.mairui.club/hszbl/fsjy/{code}/dn/{token}”
+resp = requests.get(url, headers=random_headers(), timeout=10)
+resp.raise_for_status()
+raw = resp.json()
+if not raw:
+return None
+rows = [{
+“date”: r[“d”], “open”: r[“o”], “high”: r[“h”], “low”: r[“l”],
+“close”: r[“c”], “volume”: r[“v”],
+“amount”: r.get(“e”, float(r[“c”]) * float(r[“v”])),
+} for r in raw]
+df = pd.DataFrame(rows)[_COLS]
+df[“date”] = pd.to_datetime(df[“date”])
+return _to_df(df[df[“date”] >= datetime.today() - timedelta(days=730)])
+except Exception as e:
+logger.debug(f”[mairui] {code}: {e}”)
+return None
 
 # ─────────────────────────────────────────────────────────────
+
 # 6. BaoStock（线程不安全，只在主线程串行兜底用）
+
 # ─────────────────────────────────────────────────────────────
+
 def _fetch_baostock(code: str) -> Optional[pd.DataFrame]:
-    try:
-        import baostock as bs
-        lg = bs.login()
-        if lg.error_code != "0":
-            return None
-        s = _start_date()
-        start = f"{s[:4]}-{s[4:6]}-{s[6:]}"
-        prefix = "sh" if code.startswith("6") else "sz"
-        rs = bs.query_history_k_data_plus(
-            f"{prefix}.{code}",
-            "date,open,high,low,close,volume,amount",
-            start_date=start, frequency="d", adjustflag="2",
-        )
-        rows = []
-        while rs.error_code == "0" and rs.next():
-            rows.append(rs.get_row_data())
-        bs.logout()
-        if not rows:
-            return None
-        return _to_df(pd.DataFrame(rows, columns=_COLS))
-    except Exception as e:
-        logger.debug(f"[baostock] {code}: {e}")
-        return None
-
+try:
+import baostock as bs
+lg = bs.login()
+if lg.error_code != “0”:
+return None
+s = _start_date()
+start = f”{s[:4]}-{s[4:6]}-{s[6:]}”
+prefix = “sh” if code.startswith(“6”) else “sz”
+rs = bs.query_history_k_data_plus(
+f”{prefix}.{code}”,
+“date,open,high,low,close,volume,amount”,
+start_date=start, frequency=“d”, adjustflag=“2”,
+)
+rows = []
+while rs.error_code == “0” and rs.next():
+rows.append(rs.get_row_data())
+bs.logout()
+if not rows:
+return None
+return _to_df(pd.DataFrame(rows, columns=_COLS))
+except Exception as e:
+logger.debug(f”[baostock] {code}: {e}”)
+return None
 
 # ─────────────────────────────────────────────────────────────
+
 # 7. AKShare（兜底，GitHub IP 易被封）
+
 # ─────────────────────────────────────────────────────────────
+
 def _fetch_akshare(code: str) -> Optional[pd.DataFrame]:
-    try:
-        import akshare as ak
-        df = ak.stock_zh_a_hist(
-            symbol=code, period="daily",
-            start_date=_start_date(), adjust="qfq",
-        )
-        df = df.rename(columns={
-            "日期": "date", "开盘": "open", "最高": "high",
-            "最低": "low", "收盘": "close",
-            "成交量": "volume", "成交额": "amount",
-        })
-        return _to_df(df)
-    except Exception as e:
-        logger.debug(f"[akshare] {code}: {e}")
-        return None
-
+try:
+import akshare as ak
+df = ak.stock_zh_a_hist(
+symbol=code, period=“daily”,
+start_date=_start_date(), adjust=“qfq”,
+)
+df = df.rename(columns={
+“日期”: “date”, “开盘”: “open”, “最高”: “high”,
+“最低”: “low”, “收盘”: “close”,
+“成交量”: “volume”, “成交额”: “amount”,
+})
+return _to_df(df)
+except Exception as e:
+logger.debug(f”[akshare] {code}: {e}”)
+return None
 
 # ─────────────────────────────────────────────────────────────
+
 # 统一入口：多数据源轮换
+
 # 多线程安全的数据源排前面，非安全的排后面串行兜底
+
 # ─────────────────────────────────────────────────────────────
+
 def fetch_daily_kline(code: str, cfg: dict) -> Optional[pd.DataFrame]:
-    ds  = cfg.get("datasources", {})
-    req = cfg.get("request", {})
-    delay_min = req.get("delay_min", 0.2)
-    delay_max = req.get("delay_max", 0.5)
+ds  = cfg.get(“datasources”, {})
+req = cfg.get(“request”, {})
+delay_min = req.get(“delay_min”, 0.2)
+delay_max = req.get(“delay_max”, 0.5)
 
-    # 收盘后(16:00+)锁定主力源，避免轮换导致两次结果不一致
-    now = datetime.now()
-    after_close = now.weekday() >= 5 or (now.weekday() < 5 and now.hour >= 16)
+```
+# 收盘后(16:00+)锁定主力源，避免轮换导致两次结果不一致
+now = datetime.now()
+after_close = now.weekday() >= 5 or (now.weekday() < 5 and now.hour >= 16)
 
-    # 优先级说明：
-    #   前复权可靠 + 多线程安全 → 排前
-    #   前复权可靠 + 非多线程安全 → 中间兜底
-    mt_sources = [
-        ("tencent",   lambda: _fetch_tencent(code)),     # 前复权 qfq，多线程安全
-        ("eastmoney", lambda: _fetch_eastmoney(code)),   # 前复权 fqt=1，多线程安全
-        ("tushare",   lambda: _fetch_tushare(code, ds.get("tushare_token", ""))),  # 前复权
-        ("mairui",    lambda: _fetch_mairui(code, ds.get("mairui_token", ""))),    # 前复权
-    ]
+# 优先级说明：
+#   前复权可靠 + 多线程安全 → 排前
+#   前复权可靠 + 非多线程安全 → 中间兜底
+mt_sources = [
+    ("tencent",   lambda: _fetch_tencent(code)),     # 前复权 qfq，多线程安全
+    ("eastmoney", lambda: _fetch_eastmoney(code)),   # 前复权 fqt=1，多线程安全
+    ("tushare",   lambda: _fetch_tushare(code, ds.get("tushare_token", ""))),  # 前复权
+    ("mairui",    lambda: _fetch_mairui(code, ds.get("mairui_token", ""))),    # 前复权
+]
 
-    # 非多线程安全，前复权可靠，串行兜底
-    st_sources = [
-        ("baostock",  lambda: _fetch_baostock(code)),    # 前复权 adjustflag=2
-        ("akshare",   lambda: _fetch_akshare(code)),     # 前复权 qfq
-        ("sina",      lambda: _fetch_sina(code)),        # 前复权（默认），最后兜底
-    ]
+# 非多线程安全，前复权可靠，串行兜底
+st_sources = [
+    ("baostock",  lambda: _fetch_baostock(code)),    # 前复权 adjustflag=2
+    ("akshare",   lambda: _fetch_akshare(code)),     # 前复权 qfq
+    ("sina",      lambda: _fetch_sina(code)),        # 前复权（默认），最后兜底
+]
 
-    # 收盘后：只用东方财富（最稳定可靠），失败再走全量轮换
-    if after_close:
-        try:
-            time.sleep(random.uniform(delay_min, delay_max))
-            df = _fetch_eastmoney(code)
-            if df is not None and not df.empty:
-                df["code"] = code
-                logger.debug(f"[eastmoney-locked] {code} ✓ (收盘后锁定)")
-                return df
-        except Exception as e:
-            logger.debug(f"[eastmoney-locked] {code} 异常: {e}，降级全量轮换")
-
-    for name, fn in mt_sources + st_sources:
-        try:
-            time.sleep(random.uniform(delay_min, delay_max))
-            df = fn()
-            if df is not None and not df.empty:
-                # 添加code列，方便后续使用
-                df["code"] = code
-                logger.debug(f"[{name}] {code} ✓")
-                return df
-        except Exception as e:
-            logger.debug(f"[{name}] {code} 异常: {e}")
-
-    logger.warning(f"[all sources failed] {code} 跳过")
-    return None
-
-
-# ─────────────────────────────────────────────────────────────
-# 财务数据获取
-# ─────────────────────────────────────────────────────────────
-def fetch_financial_data(code: str) -> Optional[Dict]:
-    """
-    获取股票基本面财务数据
-    
-    Returns:
-        dict: 包含 ROE、PE、PB、EPS、营收增长率等数据
-    """
+# 收盘后：只用东方财富（最稳定可靠），失败再走全量轮换
+if after_close:
     try:
-        import akshare as ak
-        
-        # 1. 尝试获取最新财务指标
-        try:
-            finance_df = ak.stock_financial_analysis_indicator(code)
-            if not finance_df.empty:
-                latest = finance_df.iloc[0]
-                return {
-                    'roe': float(latest.get('净资产收益率(ROE)', 0)),
-                    'pe': float(latest.get('市盈率(TTM)', 0)),
-                    'pb': float(latest.get('市净率', 0)),
-                    'eps': float(latest.get('每股收益', 0)),
-                    'revenue_growth': float(latest.get('营业收入同比增长率', 0))
-                }
-        except Exception as e:
-            logger.debug(f"[finance/akshare] 财务指标获取失败: {e}")
-        
-        # 2. 尝试获取估值数据作为备选
-        try:
-            valuation_df = ak.stock_zh_a_valuation_indicator(code)
-            if not valuation_df.empty:
-                latest = valuation_df.iloc[0]
-                return {
-                    'roe': 0,  # 备选方案可能没有ROE
-                    'pe': float(latest.get('市盈率-动态', 0)),
-                    'pb': float(latest.get('市净率', 0)),
-                    'eps': 0,  # 备选方案可能没有EPS
-                    'revenue_growth': 0  # 备选方案可能没有增长率
-                }
-        except Exception as e:
-            logger.debug(f"[finance/akshare] 估值数据获取失败: {e}")
-        
+        time.sleep(random.uniform(delay_min, delay_max))
+        df = _fetch_eastmoney(code)
+        if df is not None and not df.empty:
+            df["code"] = code
+            logger.debug(f"[eastmoney-locked] {code} ✓ (收盘后锁定)")
+            return df
     except Exception as e:
-        logger.debug(f"[finance] 整体获取失败: {e}")
+        logger.debug(f"[eastmoney-locked] {code} 异常: {e}，降级全量轮换")
+
+for name, fn in mt_sources + st_sources:
+    try:
+        time.sleep(random.uniform(delay_min, delay_max))
+        df = fn()
+        if df is not None and not df.empty:
+            # 添加code列，方便后续使用
+            df["code"] = code
+            logger.debug(f"[{name}] {code} ✓")
+            return df
+    except Exception as e:
+        logger.debug(f"[{name}] {code} 异常: {e}")
+
+logger.warning(f"[all sources failed] {code} 跳过")
+return None
+```
+
+# ─────────────────────────────────────────────────────────────
+
+# 财务数据获取
+
+# ─────────────────────────────────────────────────────────────
+
+def fetch_financial_data(code: str) -> Optional[Dict]:
+“””
+获取股票基本面财务数据
+
+```
+Returns:
+    dict: 包含 ROE、PE、PB、EPS、营收增长率等数据
+"""
+try:
+    import akshare as ak
     
-    return None
+    # 1. 尝试获取最新财务指标
+    try:
+        finance_df = ak.stock_financial_analysis_indicator(code)
+        if not finance_df.empty:
+            latest = finance_df.iloc[0]
+            return {
+                'roe': float(latest.get('净资产收益率(ROE)', 0)),
+                'pe': float(latest.get('市盈率(TTM)', 0)),
+                'pb': float(latest.get('市净率', 0)),
+                'eps': float(latest.get('每股收益', 0)),
+                'revenue_growth': float(latest.get('营业收入同比增长率', 0))
+            }
+    except Exception as e:
+        logger.debug(f"[finance/akshare] 财务指标获取失败: {e}")
+    
+    # 2. 尝试获取估值数据作为备选
+    try:
+        valuation_df = ak.stock_zh_a_valuation_indicator(code)
+        if not valuation_df.empty:
+            latest = valuation_df.iloc[0]
+            return {
+                'roe': 0,  # 备选方案可能没有ROE
+                'pe': float(latest.get('市盈率-动态', 0)),
+                'pb': float(latest.get('市净率', 0)),
+                'eps': 0,  # 备选方案可能没有EPS
+                'revenue_growth': 0  # 备选方案可能没有增长率
+            }
+    except Exception as e:
+        logger.debug(f"[finance/akshare] 估值数据获取失败: {e}")
+    
+except Exception as e:
+    logger.debug(f"[finance] 整体获取失败: {e}")
+
+return None
+```
