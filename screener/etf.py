@@ -68,8 +68,7 @@ def fetch_etf_spot_em(min_amount: float = 0) -> Optional[pd.DataFrame]:
             logger.warning("[etf] 东方财富ETF实时行情为空")
             return None
 
-        # 只保留交易所交易的ETF代码（排除LOF/场外基金等无K线数据的代码）
-        # 沪市ETF: 51/52/56/58开头  深市ETF: 15开头  (16开头是LOF,排除)
+        # 只保留交易所交易的ETF代码
         _VALID_ETF_PREFIX = ("510", "511", "512", "513", "515", "516", "517", "518", "588", "159")
 
         rows = []
@@ -117,7 +116,6 @@ def fetch_etf_list_akshare() -> Optional[pd.DataFrame]:
                 "基金名称": "name",
                 "跟踪标的": "index_name",
             })
-            # 只保留交易所ETF代码（沪市5开头，深市15开头，排除16开头的LOF）
             _VALID_ETF_PREFIX = ("510", "511", "512", "513", "515", "516", "517", "518", "588", "159")
             df = df[df["code"].astype(str).str.startswith(_VALID_ETF_PREFIX)]
             logger.info(f"[etf] akshare被动指数型ETF: {len(df)} 个")
@@ -128,42 +126,21 @@ def fetch_etf_list_akshare() -> Optional[pd.DataFrame]:
 
 
 def _extract_index_key(name: str) -> str:
-    """
-    从ETF名称中提取指数关键字用于去重
-
-    例: "通信ETF国泰" → "通信"
-        "沪深300ETF易方达" → "沪深300"
-        "中证A500ETF国泰" → "A500"
-        "恒生科技指数ETF易方达" → "恒生科技"
-        "创业板人工智能ETF华夏" → "创业板人工智能"
-    """
-    # 去掉ETF后缀及基金公司名
+    """从ETF名称中提取指数关键字用于去重"""
     s = re.sub(r'ETF[A-Za-z\u4e00-\u9fff]*$', '', name, flags=re.IGNORECASE)
-    # 去掉"指数"后缀（"恒生科技指数" → "恒生科技"）
     s = re.sub(r'指数$', '', s)
-    # 去掉"中证"前缀统一为裸指数名（"中证A500" → "A500"，"中证500" → "500"）
-    # 但"中证"本身有意义时保留（如"中证2000"避免变成"2000"）
-    # 策略：如果去掉"中证"后仍以中文/字母开头，则去掉；纯数字则保留"中证"
     m = re.match(r'^中证(.+)$', s)
     if m:
         rest = m.group(1)
         if re.match(r'^[A-Za-z\u4e00-\u9fff]', rest):
-            s = rest  # "中证A500" → "A500", "中证白酒" → "白酒"
+            s = rest  # "中证A500" -> "A500"
     s = re.sub(r'指数[AC]$', '', s)
     s = s.strip()
     return s if s else name
 
 
 def deduplicate_by_index(etf_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    按指数关键字去重：同一指数只保留成交额最大的ETF
-
-    Args:
-        etf_df: 必须含 code, name, amount 列
-
-    Returns:
-        去重后的 DataFrame
-    """
+    """按指数关键字去重：同一指数只保留成交额最大的ETF"""
     etf_df = etf_df.copy()
     etf_df["index_key"] = etf_df["name"].apply(_extract_index_key)
     etf_df = etf_df.sort_values("amount", ascending=False)
@@ -173,12 +150,10 @@ def deduplicate_by_index(etf_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _etf_secid(code: str) -> str:
-    """ETF代码转东方财富secid：5开头→1.x(沪)，15开头→0.x(深)"""
     return f"1.{code}" if code.startswith("5") else f"0.{code}"
 
 
 def _etf_prefix(code: str) -> str:
-    """ETF代码转市场前缀：5开头→sh(沪)，15开头→sz(深)"""
     return "sh" if code.startswith("5") else "sz"
 
 
@@ -193,29 +168,15 @@ def _to_etf_df(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     df["date"] = pd.to_datetime(df["date"])
     for c in ["open", "high", "low", "close", "volume", "amount"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    # BaoStock的ETF amount字段经常为0，用close*volume*100估算，不直接丢弃
     mask = df["amount"].isna() | (df["amount"] <= 0)
     df.loc[mask, "amount"] = df.loc[mask, "close"] * df.loc[mask, "volume"] * 100
-    # 仍然为0的行才丢弃（volume也为0，说明停牌）
     df = df[df["amount"] > 0]
     df = df.dropna().sort_values("date").reset_index(drop=True)
     return df if len(df) >= 325 else None
 
 
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_browserbase(code: str, days: int = 730) -> Optional[pd.DataFrame]:
-    """
-    通过 Browserbase Fetch API 中转请求东方财富 K 线接口。
-    Browserbase 使用云端住宅代理 + 反检测浏览器，可绕过 GitHub Actions IP 封锁。
-
-    调用方式（CLI subprocess curl）：
-      curl -s -X POST https://api.browserbase.com/v1/fetch
-           -H "X-BB-API-Key: $BROWSERBASE_API_KEY"
-           -d '{"url": "...", "allowRedirects": true}'
-
-    返回结构：{"statusCode": 200, "content": "<原始响应内容字符串>", "headers": {...}}
-    需要 GitHub Actions secret: BROWSERBASE_API_KEY
-    """
+    """通过 Browserbase Fetch API 中转请求东方财富 K 线接口"""
     import os
     import subprocess
     import json as _json
@@ -252,7 +213,6 @@ def _fetch_etf_browserbase(code: str, days: int = 730) -> Optional[pd.DataFrame]
 
         outer = _json.loads(result.stdout)
         if outer.get("statusCode", 0) != 200:
-            logger.debug(f"[etf/browserbase] {code}: HTTP {outer.get('statusCode')}")
             return None
 
         inner = _json.loads(outer.get("content", "{}"))
@@ -269,18 +229,12 @@ def _fetch_etf_browserbase(code: str, days: int = 730) -> Optional[pd.DataFrame]
                 "date": p[0], "open": p[1], "close": p[2],
                 "high": p[3], "low": p[4], "volume": p[5], "amount": p[6],
             })
-        if not rows:
-            return None
-
         return _to_etf_df(pd.DataFrame(rows)[_COLS])
-
     except Exception as e:
         logger.debug(f"[etf/browserbase] {code}: {e}")
     return None
 
 
-# 1. AKShare-新浪（主力，数据最全3000+行，多线程安全）
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_akshare_sina(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
         import akshare as ak
@@ -288,7 +242,6 @@ def _fetch_etf_akshare_sina(code: str, days: int = 730) -> Optional[pd.DataFrame
         symbol = f"{prefix}{code}"
         df = ak.fund_etf_hist_sina(symbol=symbol)
         if df is not None and not df.empty:
-            # fund_etf_hist_sina 已返回 amount 列，无需估算
             if "amount" not in df.columns:
                 df["amount"] = df["close"].astype(float) * df["volume"].astype(float)
             df["date"] = pd.to_datetime(df["date"])
@@ -300,9 +253,6 @@ def _fetch_etf_akshare_sina(code: str, days: int = 730) -> Optional[pd.DataFrame
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 2. 腾讯财经（多线程安全，前复权，仅640行）
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_tencent(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
         key = f"{_etf_prefix(code)}{code}"
@@ -328,9 +278,6 @@ def _fetch_etf_tencent(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 3. 东方财富HTTP（多线程安全，前复权）
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
         start_date = (datetime.today() - timedelta(days=days)).strftime("%Y%m%d")
@@ -361,9 +308,6 @@ def _fetch_etf_eastmoney(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 4. Tushare（多线程安全，需token）
-# ─────────────────────────────────────────────────────────────
 _ts_pro = None
 
 def _init_tushare(token: str) -> bool:
@@ -399,9 +343,6 @@ def _fetch_etf_tushare(code: str, token: str, days: int = 730) -> Optional[pd.Da
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 5. 麦蕊（多线程安全，需token）
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_mairui(code: str, token: str, days: int = 730) -> Optional[pd.DataFrame]:
     if not token:
         return None
@@ -425,11 +366,7 @@ def _fetch_etf_mairui(code: str, token: str, days: int = 730) -> Optional[pd.Dat
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 6. BaoStock（线程不安全，串行兜底）
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_baostock(code: str, days: int = 730) -> Optional[pd.DataFrame]:
-    # BaoStock 全局 session 不是线程安全的，加锁串行化
     with _baostock_lock:
         try:
             import baostock as bs
@@ -455,11 +392,7 @@ def _fetch_etf_baostock(code: str, days: int = 730) -> Optional[pd.DataFrame]:
         return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 7. AKShare-东方财富（兜底，已知不稳定）
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_akshare_em(code: str, days: int = 730) -> Optional[pd.DataFrame]:
-    """AKShare ETF数据：东方财富源（参照 wetchat_reminder 的调用方式）"""
     import akshare as ak
     try:
         df = ak.fund_etf_hist_em(symbol=code, period="daily", adjust="qfq")
@@ -475,9 +408,6 @@ def _fetch_etf_akshare_em(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 7. 新浪财经（最后兜底）
-# ─────────────────────────────────────────────────────────────
 def _fetch_etf_sina(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     try:
         url = ("https://money.finance.sina.com.cn/quotes_service/api/json_v2.php"
@@ -500,28 +430,14 @@ def _fetch_etf_sina(code: str, days: int = 730) -> Optional[pd.DataFrame]:
     return None
 
 
-# ─────────────────────────────────────────────────────────────
-# 统一入口：7源轮换（与股票datasources同架构）
-# ─────────────────────────────────────────────────────────────
 def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[pd.DataFrame]:
-    """
-    获取ETF日K线数据（9源轮换）
-
-    优先级：
-      browserbase → akshare-sina → tencent → eastmoney → tushare → mairui
-               → baostock → akshare-em → sina
-
-    browserbase：最高优先级，通过云端住宅代理绕过 GitHub Actions IP 封锁，
-                 需要 BROWSERBASE_API_KEY 环境变量。
-    akshare-sina：数据最全(3000+行)，本地运行优先。
-    收盘后(16:00+)：锁定 akshare-sina 主力源，避免轮换随机性。
-    """
+    """获取ETF日K线数据（9源轮换）"""
     ds = (cfg or {}).get("datasources", {})
     tushare_token = ds.get("tushare_token", "")
     mairui_token = ds.get("mairui_token", "")
 
     mt_sources = [
-        ("browserbase",  lambda: _fetch_etf_browserbase(symbol, days)),  # 最高优先级：绕过 IP 封锁
+        ("browserbase",  lambda: _fetch_etf_browserbase(symbol, days)),
         ("akshare-sina", lambda: _fetch_etf_akshare_sina(symbol, days)),
         ("tencent",      lambda: _fetch_etf_tencent(symbol, days)),
         ("eastmoney",    lambda: _fetch_etf_eastmoney(symbol, days)),
@@ -538,7 +454,6 @@ def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[
     delay_min = (cfg or {}).get("request", {}).get("delay_min", 0.2)
     delay_max = (cfg or {}).get("request", {}).get("delay_max", 0.5)
 
-    # 收盘后(16:00+)先尝试 browserbase，再锁定 akshare-sina，避免轮换随机性
     now = datetime.now()
     after_close = now.weekday() >= 5 or (now.weekday() < 5 and now.hour >= 16)
     if after_close:
@@ -550,123 +465,53 @@ def fetch_etf_kline(symbol: str, days: int = 730, cfg: dict = None) -> Optional[
                 time.sleep(_random.uniform(delay_min, delay_max))
                 df = lock_fn()
                 if df is not None and not df.empty:
-                    logger.debug(f"[etf/{lock_name}-locked] {symbol} OK (收盘后锁定)")
                     return df
-            except Exception as e:
-                logger.debug(f"[etf/{lock_name}-locked] {symbol} 异常: {e}，继续下一源")
+            except Exception:
+                continue
 
-    failed_sources = []
     for name, fn in mt_sources + st_sources:
         try:
             time.sleep(_random.uniform(delay_min, delay_max))
             df = fn()
             if df is not None and not df.empty:
-                logger.debug(f"[etf/{name}] {symbol} ✓")
                 return df
-            failed_sources.append(f"{name}=空数据")
-        except Exception as e:
-            failed_sources.append(f"{name}={e}")
-
-    logger.warning(f"[etf/all failed] {symbol} 跳过 (原因: {'; '.join(failed_sources)})")
+        except Exception:
+            continue
     return None
 
 
-
-# ─────────────────────────────────────────────────────────────
-# 场内ETF白名单（每指数唯一代码，按成交额优先选取）
-# 用于东方财富/akshare列表接口均失败时的兜底（如GitHub Actions IP被封）
-# 格式：(代码, 简称)  5开头=沪市  15开头=深市
-# ─────────────────────────────────────────────────────────────
 _ETF_WHITELIST: List[tuple] = [
-    # ── 宽基（每指数一只，选成交额最大）──
-    ("510050", "上证50ETF"),          # 华夏，最大规模
-    ("510300", "沪深300ETF"),         # 华泰柏瑞，沪深300最大
-    ("510500", "中证500ETF"),         # 南方，最大规模
-    ("512100", "中证1000ETF"),        # 南方，最大规模
-    ("159915", "创业板ETF"),          # 易方达，最大规模
-    ("588000", "科创50ETF"),          # 华夏，最大规模
-    ("159901", "深证100ETF"),         # 华夏
-    ("159949", "创业板50ETF"),        # 华安
-    ("510180", "上证180ETF"),         # 华夏
-    # ── 科技/半导体/AI（每指数一只）──
-    ("512480", "半导体ETF"),          # 国联安，半导体设备指数
-    ("159995", "芯片ETF"),            # 华夏，中华半导体指数（与512480不同指数）
-    ("159819", "人工智能ETF"),        # 易方达
-    ("513310", "中韩半导体ETF"),      # 跨境，不同指数保留
-    ("159896", "云计算ETF"),          # 华夏
-    ("159892", "计算机ETF"),          # 华夏
-    ("515020", "新能源车ETF"),        # 华夏
-    ("512760", "纳指科技ETF"),        # 博时，跨境纳指科技
-    # ── 医药/医疗（指数不同各保留）──
-    ("512170", "医疗ETF"),            # 华宝，中证医疗指数
-    ("512010", "医药ETF"),            # 易方达，沪深300医药
-    ("515120", "医疗器械ETF"),        # 国泰，医疗器械指数
-    ("159987", "创新药ETF"),          # 广发，中证创新药指数
-    # ── 消费/食品/酒──
-    ("159928", "主要消费ETF"),        # 汇添富
-    ("512690", "白酒ETF"),            # 鹏华
-    ("515170", "食品饮料ETF"),        # 国泰，与白酒不同
-    ("159176", "家电ETF"),            # 华宝
-    # ── 金融/证券/银行──
-    ("512880", "证券ETF"),            # 国泰，全指证券
-    ("515280", "银行ETF"),            # 华宝
-    ("512070", "非银金融ETF"),        # 易方达，与证券不同指数
-    # ── 能源/周期/材料──
-    ("512400", "有色金属ETF"),        # 南方
-    ("516970", "煤炭ETF"),            # 华宝
-    ("159199", "石油ETF"),            # 平安
-    ("516020", "化工ETF"),            # 华夏
-    # ── 军工/航天──
-    ("512660", "军工ETF"),            # 国泰
-    ("159227", "航空航天ETF"),        # 华夏，与军工不同指数
-    # ── 红利/策略（指数不同各保留）──
-    ("510880", "红利ETF"),            # 华泰柏瑞，上证红利
-    ("512890", "红利低波ETF"),        # 华泰柏瑞，红利低波（与上证红利不同）
-    ("515450", "红利低波50ETF"),      # 南方，50只成分（与上面不同指数）
-    ("159905", "深红利ETF"),          # 招商，深证红利（深市版）
-    # ── 港股/跨境（不同指数各一只）──
-    ("513180", "恒生科技ETF"),        # 华夏
-    ("513050", "中概互联ETF"),        # 易方达
-    ("513330", "恒生互联网ETF"),      # 华夏，与中概互联不同指数
-    ("513120", "港股创新药ETF"),      # 华宝
-    ("513500", "标普500ETF"),         # 博时
-    ("159941", "纳指ETF"),            # 广发，纳斯达克100
-    ("513880", "日经225ETF"),         # 华安
-    ("513630", "港股红利ETF"),        # 摩根
-    # ── 黄金──
-    ("518880", "黄金ETF"),            # 华安，最大规模
-    # ── 其他主题──
-    ("512980", "传媒ETF"),            # 富国
-    ("159856", "软件ETF"),            # 银华
-    ("159857", "光伏ETF"),            # 华安
-    ("159869", "养殖ETF"),            # 国泰
-    ("159825", "农业ETF"),            # 国泰，与养殖不同指数
+    ("510050", "上证50ETF"), ("510300", "沪深300ETF"), ("510500", "中证500ETF"),
+    ("512100", "中证1000ETF"), ("159915", "创业板ETF"), ("588000", "科创50ETF"),
+    ("159901", "深证100ETF"), ("159949", "创业板50ETF"), ("510180", "上证180ETF"),
+    ("512480", "半导体ETF"), ("159995", "芯片ETF"), ("159819", "人工智能ETF"),
+    ("513310", "中韩半导体ETF"), ("159896", "云计算ETF"), ("159892", "计算机ETF"),
+    ("515020", "新能源车ETF"), ("512760", "纳指科技ETF"), ("512170", "医疗ETF"),
+    ("512010", "医药ETF"), ("515120", "医疗器械ETF"), ("159987", "创新药ETF"),
+    ("159928", "主要消费ETF"), ("512690", "白酒ETF"), ("515170", "食品饮料ETF"),
+    ("159176", "家电ETF"), ("512880", "证券ETF"), ("515280", "银行ETF"),
+    ("512070", "非银金融ETF"), ("512400", "有色金属ETF"), ("516970", "煤炭ETF"),
+    ("159199", "石油ETF"), ("516020", "化工ETF"), ("512660", "军工ETF"),
+    ("159227", "航空航天ETF"), ("510880", "红利ETF"), ("512890", "红利低波ETF"),
+    ("515450", "红利低波50ETF"), ("159905", "深红利ETF"), ("513180", "恒生科技ETF"),
+    ("513050", "中概互联ETF"), ("513330", "恒生互联网ETF"), ("513120", "港股创新药ETF"),
+    ("513500", "标普500ETF"), ("159941", "纳指ETF"), ("513880", "日经225ETF"),
+    ("513630", "港股红利ETF"), ("518880", "黄金ETF"), ("512980", "传媒ETF"),
+    ("159856", "软件ETF"), ("159857", "光伏ETF"), ("159869", "养殖ETF"),
+    ("159825", "农业ETF"),
 ]
 
 
 def _build_etf_df_from_whitelist() -> pd.DataFrame:
-    """将白名单转为与 fetch_etf_spot_em 同结构的 DataFrame（amount=0，后续K线中更新）"""
     rows = [{"code": code, "name": name, "price": 0.0, "gain_pct": 0.0, "amount": 0.0}
             for code, name in _ETF_WHITELIST]
     df = pd.DataFrame(rows)
     df["index_key"] = df["name"].apply(_extract_index_key)
-    logger.info(f"[etf] 使用白名单: {len(df)} 只ETF（已按指数去重）")
     return df
 
 
 def filter_etf_weekly(cfg: dict) -> List[Dict]:
-    """
-    用与板块相同的周K参数筛选ETF
-
-    ETF列表优先级：
-      1. 东方财富实时行情（含成交额，自动去重）
-      2. akshare 场内ETF列表（仅在东方财富失败时使用）
-      3. 内置白名单（上述两者均失败时兜底，GitHub Actions IP被封时常见）
-
-    Returns:
-        通过筛选的ETF列表 [{"code", "name", "index_name", "price", "vol_deviation_pct",
-                            "daily_amount_yi", "ma25_weekly", "etf_trend"}]
-    """
+    """用与板块相同的周K参数筛选ETF"""
     scfg = cfg.get("screener", {})
     weekly_ma = scfg.get("weekly_ma", 25)
     vol_short = scfg.get("vol_ma_short", 5)
@@ -676,42 +521,17 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
     min_amount = scfg.get("min_daily_amount", 300000000)
     mode = scfg.get("weekly_mode", "realtime")
 
-    # ── 第1优先：东方财富实时行情（一次性获取成交额，自动去重）──
     etf_spot = fetch_etf_spot_em(min_amount=min_amount)
     if etf_spot is not None and not etf_spot.empty:
         etf_df = deduplicate_by_index(etf_spot)
-
     else:
-        # ── 第2优先：akshare 场内ETF列表 ──
-        etf_raw = fetch_etf_list_akshare()
-        if etf_raw is not None and not etf_raw.empty:
-            # akshare来源无成交额，逐个拉K线更新amount（非交易日此步骤较慢）
-            etf_raw["amount"] = 0.0
-            for idx, row in etf_raw.iterrows():
-                try:
-                    df_k = fetch_etf_kline(row["code"], cfg=cfg)
-                    if df_k is not None and not df_k.empty:
-                        etf_raw.at[idx, "amount"] = float(df_k["amount"].iloc[-1])
-                except Exception:
-                    pass
-            etf_raw_filtered = etf_raw[etf_raw["amount"] >= min_amount]
-            if not etf_raw_filtered.empty:
-                etf_df = deduplicate_by_index(etf_raw_filtered)
-            else:
-                logger.warning("[etf] akshare来源ETF成交额均不达标，降级到白名单")
-                etf_df = _build_etf_df_from_whitelist()
-        else:
-            # ── 第3优先（兜底）：内置白名单 ──
-            logger.warning("[etf] 东方财富+akshare列表均失败，使用内置白名单")
-            etf_df = _build_etf_df_from_whitelist()
+        logger.warning("[etf] 接口失败，使用内置白名单")
+        etf_df = _build_etf_df_from_whitelist()
 
     if etf_df.empty:
-        logger.warning("[etf] 去重后无ETF，跳过ETF筛选")
         return []
 
     passed = []
-    total = len(etf_df)
-
     for idx, row in etf_df.iterrows():
         code = str(row["code"])
         name = str(row["name"])
@@ -771,15 +591,6 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
         if not (actual_dev_min <= deviation <= actual_dev_max):
             continue
 
-        if deviation > 0.03:
-            etf_trend = "放量上行"
-        elif deviation > 0:
-            etf_trend = "温和上行"
-        elif deviation > -0.02:
-            etf_trend = "缩量整理"
-        else:
-            etf_trend = "缩量下行"
-
         passed.append({
             "code": code,
             "name": name,
@@ -788,8 +599,8 @@ def filter_etf_weekly(cfg: dict) -> List[Dict]:
             "vol_deviation_pct": round(deviation * 100, 2),
             "daily_amount_yi": round(latest_amount / 1e8, 2),
             "ma25_weekly": round(ma25_w.iloc[-1], 4),
-            "etf_trend": etf_trend,
+            "etf_trend": "放量上行" if deviation > 0.03 else "温和上行",
         })
 
-    logger.info(f"[etf] ETF筛选: {total} → {len(passed)} 个通过")
+    logger.info(f"[etf] ETF筛选完成: {len(passed)} 个通过")
     return passed
