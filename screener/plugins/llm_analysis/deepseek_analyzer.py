@@ -68,9 +68,11 @@ class LLMAnalysisResult:
     key_events: List[str]
     policy_impact: str
     macro_impact: str
-    investment_suggestion: str
-    confidence: str
-    success: bool
+    policy_score: int = 50
+    macro_score: int = 50
+    investment_suggestion: str = "观望"
+    confidence: str = "中"
+    success: bool = False
     error_message: Optional[str] = None
 
 
@@ -80,7 +82,7 @@ SYSTEM_PROMPT = """你是A股投资研究专家。从新闻中提取关键信息
 1. 只提取新闻中明确提到的信息，禁止编造
 2. 信息不足的维度标注"信息不足"
 3. 忽略重复、广告、无实质内容的条目
-4. 情绪评分：0=极度利空，50=中性，100=极度利好
+4. 评分：0=极度利空，50=中性，100=极度利好
 
 【输出JSON格式】
 {
@@ -89,6 +91,8 @@ SYSTEM_PROMPT = """你是A股投资研究专家。从新闻中提取关键信息
   "key_events": ["最多3个关键事件"],
   "policy_impact": "政策面影响（无则填'信息不足'）",
   "macro_impact": "宏观面影响（无则填'信息不足'）",
+  "policy_score": 0-100,
+  "macro_score": 0-100,
   "investment_suggestion": "买入/持有/减持/观望",
   "confidence": "高/中/低"
 }"""
@@ -652,6 +656,12 @@ class LLMNewsAnalyzer:
         m_macro = re.search(r'"macro_impact"\s*:\s*"(.+?)"', content, re.DOTALL)
         if m_macro:
             parsed["macro_impact"] = m_macro.group(1)[:200]
+        m_policy_score = re.search(r'"policy_score"\s*:\s*(\d+)', content)
+        if m_policy_score:
+            parsed["policy_score"] = int(m_policy_score.group(1))
+        m_macro_score = re.search(r'"macro_score"\s*:\s*(\d+)', content)
+        if m_macro_score:
+            parsed["macro_score"] = int(m_macro_score.group(1))
         m_suggest = re.search(r'"investment_suggestion"\s*:\s*"(.+?)"', content, re.DOTALL)
         if m_suggest:
             parsed["investment_suggestion"] = m_suggest.group(1)[:50]
@@ -673,13 +683,14 @@ class LLMNewsAnalyzer:
         return self._fallback_parse(content)
 
     def _build_result_from_dict(self, data: dict) -> LLMAnalysisResult:
-        """从字典构建 LLMAnalysisResult"""
         return LLMAnalysisResult(
             sentiment_score=data.get("sentiment_score", 50),
             sentiment_reason=data.get("sentiment_reason", ""),
             key_events=data.get("key_events", []),
             policy_impact=data.get("policy_impact", ""),
             macro_impact=data.get("macro_impact", ""),
+            policy_score=data.get("policy_score", 50),
+            macro_score=data.get("macro_score", 50),
             investment_suggestion=data.get("investment_suggestion", "观望"),
             confidence=data.get("confidence", "中"),
             success=True

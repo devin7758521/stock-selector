@@ -160,31 +160,35 @@ class EnhancedLLMAnalyzer:
             )
 
             llm_news_reason = ""
+            llm_policy_score = None
+            llm_macro_score = None
             if self.deepseek_analyzer and news_context:
-                logger.info(f"使用DeepSeek进行新闻深度分析: {stock_name}")
+                logger.info(f"使用LLM进行新闻深度分析: {stock_name}")
                 llm_result = self.deepseek_analyzer.analyze(
                     news_context, stock_name, code, industry
                 )
                 if llm_result.success:
                     news_score = llm_result.sentiment_score
                     llm_news_reason = llm_result.sentiment_reason
+                    llm_policy_score = llm_result.policy_score
+                    llm_macro_score = llm_result.macro_score
                     if llm_result.key_events:
                         news_headlines = "；".join(llm_result.key_events)
                     if llm_result.policy_impact:
                         policy_info = llm_result.policy_impact
                     if llm_result.macro_impact:
                         macro_info = llm_result.macro_impact
-                    logger.info(f"DeepSeek分析完成，情绪评分: {news_score}")
+                    logger.info(f"LLM分析完成，情绪: {news_score}, 政策: {llm_policy_score}, 宏观: {llm_macro_score}")
 
-            policy_detail, policy_score = policy_analyzer.analyze(
-                context, news_context
-            )
+            policy_detail, _ = policy_analyzer.analyze(context, news_context)
+            policy_score = llm_policy_score if llm_policy_score is not None else 50
 
             market_detail, market_score = market_analyzer.analyze(context)
+            macro_score = llm_macro_score if llm_macro_score is not None else 50
 
             llm_base_score = self._calculate_llm_score(
                 technical_score, news_score,
-                policy_score, market_score
+                policy_score, macro_score, market_score
             )
 
             ai_score = self._extract_ai_score(ai_analysis)
@@ -264,20 +268,18 @@ class EnhancedLLMAnalyzer:
 
     def _calculate_llm_score(self, technical_score: Optional[int],
                             news_score: Optional[int], policy_score: Optional[int],
+                            macro_score: Optional[int],
                             market_score: Optional[int]) -> float:
-        """计算LLM综合评分（仅含消息面/政策面/市场环境），技术面由外层 tech_score 单独计算。
-        
-        权重分配：news 45%, policy 25%, market 30%
-        缺数据时按比例重新分配权重，避免技术面被重复计算。
-        """
         weights = {
-            "news": 0.45,
-            "policy": 0.25,
-            "market": 0.30,
+            "news": 0.40,
+            "policy": 0.20,
+            "macro": 0.15,
+            "market": 0.25,
         }
         scores = {
             "news": news_score,
             "policy": policy_score,
+            "macro": macro_score,
             "market": market_score,
         }
         available = {k: v for k, v in scores.items() if v is not None}
@@ -290,9 +292,10 @@ class EnhancedLLMAnalyzer:
             return sum(available[k] * (weights[k] / total_weight) for k in available)
 
         return (
-            news_score * 0.45 +
-            policy_score * 0.25 +
-            market_score * 0.30
+            news_score * 0.40 +
+            policy_score * 0.20 +
+            macro_score * 0.15 +
+            market_score * 0.25
         )
 
     def _extract_ai_score(self, ai_analysis: Optional[Dict]) -> int:
