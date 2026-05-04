@@ -1,23 +1,26 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-Scrapling 新闻抓取模块 (A 股适配版)
+Scrapling 新闻抓取模块 (A 股适配版) — 已修复 Scrapling API
 ===================================
 
-借鉴 https://github.com/devin7758521/quant-feishu 的 Scrapling 新闻抓取能力，
-适配 A 股场景，支持 basic/stealth 双模式。
+修复说明（2026-05）：
+  旧版代码用 `Fetcher.fetch(url)` —— 但 Fetcher 只有 `.get()/.post()` 等 HTTP 方法，
+  `.fetch()` 是 StealthyFetcher / DynamicFetcher（Playwright 系）独有接口。
+  正确映射：
+    basic  模式 → Fetcher.get(url, timeout=N)
+    stealth 模式 → StealthyFetcher.fetch(url, headless=True, ...)
 
-特点：
-1. 多源中文财经新闻抓取（东方财富、同花顺、新浪、雪球等）
-2. 标题去重（前 50 字符小写去重键）
-3. 自动降级：Scrapling → requests+BS4 → AkShare 已有逻辑
-4. 支持 basic(HTTP) 和 stealth(Playwright) 两种模式
+  元素文本提取也一并修复：
+    css 选择器带 `::text` 时 el.get() 返回纯文本；
+    不带 `::text` 时 el.get() 返回外层 HTML，需用 el.text 或手动剥 tag。
 
 Copyright (c) 2026 stock selector
 """
 
 import logging
 import os
+import re
 import time
 from typing import List, Dict, Optional, Set
 
@@ -27,20 +30,24 @@ logger = logging.getLogger(__name__)
 
 # A 股适配的 Scrapling 新闻源
 # (name, url_template, css_selector, lang)
+# css_selector 末尾带 ::text 时 el.get() 直接返回纯文本，否则需剥 HTML tag
 SCRAPLING_NEWS_SOURCES_A_STOCK = [
-    # 个股新闻源
+    # 个股新闻源 — 选择器带 ::text，el.get() 即是文本
     ("东方财富个股", "https://so.eastmoney.com/web/s?keyword={code}", "h3 a::text, .title a::text", "zh"),
-    ("同花顺个股", "http://so.10jqka.com.cn/s?q={code}", ".search-result-title a::text", "zh"),
-    ("新浪财经个股", "https://search.sina.com.cn/?q={name}+{code}&range=all&c=news", ".box-result a::text, .result a::text", "zh"),
-    ("雪球个股", "https://xueqiu.com/k?q={name}+{code}", ".search__item__title a::text, h3 a::text", "zh"),
+    ("同花顺个股",   "http://so.10jqka.com.cn/s?q={code}",           ".search-result-title a::text", "zh"),
+    ("新浪财经个股", "https://search.sina.com.cn/?q={name}+{code}&range=all&c=news",
+                    ".box-result a::text, .result a::text", "zh"),
+    ("雪球个股",     "https://xueqiu.com/k?q={name}+{code}",          ".search__item__title a::text, h3 a::text", "zh"),
     # 宏观/市场新闻源
     ("东方财富财经", "https://so.eastmoney.com/web/s?keyword=宏观经济+A股", "h3 a::text, .title a::text", "zh"),
     ("新浪财经市场", "https://search.sina.com.cn/?q=A股+市场+政策&range=all&c=news", ".box-result a::text", "zh"),
     # 英文财经源（全球视野）
-    ("Reuters", "https://www.reuters.com/search/news?query=China+stock+{name}", "h3.search-result-title::text", "en"),
+    ("Reuters",       "https://www.reuters.com/search/news?query=China+stock+{name}",
+                      "h3.search-result-title::text", "en"),
     ("Yahoo Finance", "https://finance.yahoo.com/quote/{code}.SS/news/", "h3 a::text, h3::text", "en"),
-    ("Google News", "https://news.google.com/search?q={name}+stock+China&hl=zh-CN", "h3::text, h4::text", "zh"),
-    ("Investing.com", "https://www.investing.com/news/stock-market-news", "article a[title]::attr(title)", "en"),
+    ("Google News",   "https://news.google.com/search?q={name}+stock+China&hl=zh-CN", "h3::text, h4::text", "zh"),
+    ("Investing.com", "https://www.investing.com/news/stock-market-news",
+                      "article a[title]::attr(title)", "en"),
 ]
 
 
@@ -52,6 +59,27 @@ def _get_scrapling_mode() -> str:
 def _dedup_key(title: str) -> str:
     """生成去重键：标题前 50 字符小写"""
     return (title or "")[:50].lower().strip()
+
+
+def _el_text(el) -> str:
+    """
+    从 Scrapling 元素中安全提取纯文本。
+    - 选择器带 ::text / ::attr(xxx) 时，el.get() 已是字符串
+    - 否则 el.get() 返回外层 HTML，用 el.text 或 strip HTML tags 兜底
+    """
+    # 优先用 .text（纯文本属性，大多数版本均有）
+    if hasattr(el, 'text') and el.text:
+        return str(el.text).strip()
+
+    # 其次 .get()
+    if hasattr(el, 'get'):
+        raw = el.get() or ""
+        # 若含 HTML 标签则剥离
+        if '<' in raw:
+            raw = re.sub(r'<[^>]+>', '', raw)
+        return raw.strip()
+
+    return str(el).strip()
 
 
 def scrapling_stock_news(
@@ -84,54 +112,42 @@ def scrapling_stock_news(
     try:
         if mode == "stealth":
             from scrapling.fetchers import StealthyFetcher
-            fetch = StealthyFetcher.fetch
-            logger.info("Scrapling mode: stealth (Playwright-based)")
+            logger.info("Scrapling mode: stealth (Playwright / patchright)")
+
+            for src_name, url_tpl, css_sel, lang in SCRAPLING_NEWS_SOURCES_A_STOCK:
+                if len(all_news) >= max_total:
+                    break
+                try:
+                    url = url_tpl.format(code=code_6, name=stock_name or code_6)
+                    page = StealthyFetcher.fetch(url, headless=True, network_idle=True, timeout=15)
+                    _collect_from_page(page, css_sel, src_name, max_per_source,
+                                       seen_titles, all_news, max_total)
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.debug(f"Scrapling stealth {src_name} ({code_6}): {e}")
+
         else:
+            # basic 模式：Fetcher 用 .get()，不是 .fetch()
             from scrapling.fetchers import Fetcher
-            fetch = Fetcher.fetch
-            logger.info("Scrapling mode: basic (HTTP)")
+            logger.info("Scrapling mode: basic (HTTP via curl_cffi)")
 
-        for src_name, url_tpl, css_sel, lang in SCRAPLING_NEWS_SOURCES_A_STOCK:
-            if len(all_news) >= max_total:
-                break
-
-            try:
-                url = url_tpl.format(code=code_6, name=stock_name or code_6)
-                if mode == "stealth":
-                    page = fetch(url, headless=True, network_idle=True, timeout=15)
-                else:
-                    page = fetch(url, timeout=15)
-
-                titles = page.css(css_sel)
-                for el in titles[:max_per_source]:
-                    text = el.get() if hasattr(el, 'get') else (el.text.strip() if hasattr(el, 'text') else str(el).strip())
-                    if not text or len(text) < 10 or _is_ad(text):
-                        continue
-                    key = _dedup_key(text)
-                    if key in seen_titles:
-                        continue
-                    seen_titles.add(key)
-
-                    news = NewsResult(
-                        title=text,
-                        content="",
-                        url="",
-                        source=src_name,
-                        pub_date=""
-                    )
-                    all_news.append(news)
-
-                time.sleep(0.3)
-
-            except Exception as e:
-                logger.debug(f"Scrapling {src_name} for {code_6}: {e}")
-                continue
+            for src_name, url_tpl, css_sel, lang in SCRAPLING_NEWS_SOURCES_A_STOCK:
+                if len(all_news) >= max_total:
+                    break
+                try:
+                    url = url_tpl.format(code=code_6, name=stock_name or code_6)
+                    page = Fetcher.get(url, timeout=15)      # ← 关键修复：.get() 非 .fetch()
+                    _collect_from_page(page, css_sel, src_name, max_per_source,
+                                       seen_titles, all_news, max_total)
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.debug(f"Scrapling basic {src_name} ({code_6}): {e}")
 
         if all_news:
             logger.info(f"Scrapling 个股新闻({code_6}): 获取到 {len(all_news)} 条")
 
     except ImportError:
-        logger.info("scrapling 未安装，跳过 Scrapling 新闻抓取 (pip install scrapling)")
+        logger.info("scrapling 未安装，跳过 Scrapling 新闻抓取 (pip install 'scrapling[fetchers]')")
     except Exception as e:
         logger.warning(f"Scrapling 新闻抓取失败: {e}")
 
@@ -169,47 +185,33 @@ def scrapling_market_news(
     try:
         if mode == "stealth":
             from scrapling.fetchers import StealthyFetcher
-            fetch = StealthyFetcher.fetch
+
+            for src_name, url_tpl, css_sel, lang in macro_sources:
+                if len(all_news) >= max_total:
+                    break
+                try:
+                    url = url_tpl.format(code="", name="")
+                    page = StealthyFetcher.fetch(url, headless=True, network_idle=True, timeout=15)
+                    _collect_from_page(page, css_sel, src_name, max_per_source,
+                                       seen_titles, all_news, max_total)
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.debug(f"Scrapling stealth 宏观 {src_name}: {e}")
+
         else:
             from scrapling.fetchers import Fetcher
-            fetch = Fetcher.fetch
 
-        for src_name, url_tpl, css_sel, lang in macro_sources:
-            if len(all_news) >= max_total:
-                break
-
-            try:
-                # 宏观源直接用模板URL（已包含搜索词）
-                url = url_tpl.format(code="", name="")
-                if mode == "stealth":
-                    page = fetch(url, headless=True, network_idle=True, timeout=15)
-                else:
-                    page = fetch(url, timeout=15)
-
-                titles = page.css(css_sel)
-                for el in titles[:max_per_source]:
-                    text = el.get() if hasattr(el, 'get') else (el.text.strip() if hasattr(el, 'text') else str(el).strip())
-                    if not text or len(text) < 10 or _is_ad(text):
-                        continue
-                    key = _dedup_key(text)
-                    if key in seen_titles:
-                        continue
-                    seen_titles.add(key)
-
-                    news = NewsResult(
-                        title=text,
-                        content="",
-                        url="",
-                        source=src_name,
-                        pub_date=""
-                    )
-                    all_news.append(news)
-
-                time.sleep(0.3)
-
-            except Exception as e:
-                logger.debug(f"Scrapling 宏观 {src_name}: {e}")
-                continue
+            for src_name, url_tpl, css_sel, lang in macro_sources:
+                if len(all_news) >= max_total:
+                    break
+                try:
+                    url = url_tpl.format(code="", name="")
+                    page = Fetcher.get(url, timeout=15)      # ← 关键修复
+                    _collect_from_page(page, css_sel, src_name, max_per_source,
+                                       seen_titles, all_news, max_total)
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.debug(f"Scrapling basic 宏观 {src_name}: {e}")
 
         if all_news:
             logger.info(f"Scrapling 市场新闻: 获取到 {len(all_news)} 条")
@@ -220,6 +222,30 @@ def scrapling_market_news(
         logger.warning(f"Scrapling 市场新闻抓取失败: {e}")
 
     return all_news[:max_total]
+
+
+def _collect_from_page(page, css_sel: str, src_name: str,
+                        max_per_source: int, seen_titles: Set[str],
+                        all_news: List[NewsResult], max_total: int) -> None:
+    """公共帮助函数：从页面 CSS 匹配结果中提取新闻并去重。"""
+    titles = page.css(css_sel)
+    for el in titles[:max_per_source]:
+        if len(all_news) >= max_total:
+            break
+        text = _el_text(el)
+        if not text or len(text) < 10 or _is_ad(text):
+            continue
+        key = _dedup_key(text)
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
+        all_news.append(NewsResult(
+            title=text,
+            content="",
+            url="",
+            source=src_name,
+            pub_date=""
+        ))
 
 
 def scrapling_stock_news_fallback(
@@ -245,10 +271,12 @@ def scrapling_stock_news_fallback(
     code_6 = stock_code.zfill(6)[-6:] if stock_code else ""
     seen: Set[str] = set()
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        )
     }
 
-    # 多源并发尝试
     sources = [
         {
             "name": "东方财富",
@@ -278,8 +306,7 @@ def scrapling_stock_news_fallback(
             for sel in src["selectors"]:
                 if len(results) >= max_results:
                     break
-                items = soup.select(sel)
-                for item in items:
+                for item in soup.select(sel):
                     if len(results) >= max_results:
                         break
                     title = item.get_text(strip=True)
@@ -289,7 +316,6 @@ def scrapling_stock_news_fallback(
                     if key in seen:
                         continue
                     seen.add(key)
-
                     link = item.get("href", "")
                     results.append(NewsResult(
                         title=title,
