@@ -171,8 +171,8 @@ class LLMNewsAnalyzer:
 
         Args:
             api_key: 主模型 API 密钥
-            model: 主模型名称，如 deepseek-chat、gemini-2.5-flash 等
-            fallback_model: 备用模型名称，如 deepseek-reasoner 等
+            model: 主模型名称，如 deepseek-v4-flash、gemini-2.5-flash 等
+            fallback_model: 备用模型名称，如 deepseek-v4-flash 等
             deepseek_api_key: DeepSeek 专用 API Key（用于 fallback）
             gemini_api_key_2: 第二个 Gemini API Key（降级备选）
             gemini_model_2: 第二个 Gemini 模型名称
@@ -205,10 +205,10 @@ class LLMNewsAnalyzer:
             providers.append({"name": "gemini2", "api_key": self.gemini_api_key_2, "model": self.gemini_model_2})
         if self.deepseek_api_key and self.deepseek_api_key != self.api_key:
             providers.append({"name": "deepseek", "api_key": self.deepseek_api_key,
-                              "model": self.fallback_model if self.fallback_model and "deepseek" not in self.model.lower() else "deepseek-chat"})
+                              "model": self.fallback_model if self.fallback_model and "deepseek" not in self.model.lower() else "deepseek-v4-flash"})
         elif self.deepseek_api_key and "deepseek" not in self.model.lower():
             providers.append({"name": "deepseek", "api_key": self.deepseek_api_key,
-                              "model": self.fallback_model or "deepseek-chat"})
+                              "model": self.fallback_model or "deepseek-v4-flash"})
         if not providers and self.api_key:
             providers.append({"name": "deepseek" if "deepseek" in self.model.lower() else "gemini",
                               "api_key": self.api_key, "model": self.model_name})
@@ -352,7 +352,7 @@ class LLMNewsAnalyzer:
         }
         model = self.fallback_model if self.fallback_model else self.model_name
         if model in ("deepseek", "local", ""):
-            model = "deepseek-chat"
+            model = "deepseek-v4-flash"
         logger.info(f"使用 DeepSeek synthesize 模型: {model}")
         payload = {
             "model": model,
@@ -457,7 +457,7 @@ class LLMNewsAnalyzer:
         """使用 DeepSeek 分析（默认参数）"""
         model = self.fallback_model if self.fallback_model else self.model_name
         if model in ("deepseek", "local", ""):
-            model = "deepseek-chat"
+            model = "deepseek-v4-flash"
         return self._analyze_with_deepseek_key(news_context, stock_name, code, industry,
                                                 api_key=self.deepseek_api_key, model=model)
 
@@ -481,7 +481,7 @@ class LLMNewsAnalyzer:
         }
 
         if model in ("deepseek", "local", ""):
-            model = "deepseek-chat"
+            model = "deepseek-v4-flash"
 
         payload = {
             "model": model,
