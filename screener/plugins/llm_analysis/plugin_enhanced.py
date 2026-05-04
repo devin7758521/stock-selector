@@ -407,15 +407,6 @@ class LLMAnalysisPlugin(Plugin):
         return context
     
     def _search_news(self, code: str, name: str) -> Optional[str]:
-        """
-        搜索股票相关新闻，构建三类新闻上下文并汇总。
-
-        优化：
-        - 市场/宏观新闻与个股无关，由外部预抓后注入 cached_market_ctx /
-          cached_macro_ctx，每只股票只抓个股新闻，避免重复网络请求。
-        - summarize_news 调用一次 LLM 汇总新闻；若汇总结果已在 cached_summary
-          中则直接复用（同一只股票不会被调用两次，但保留接口以防将来多次调用）。
-        """
         from screener.news_akshare import build_all_news_context
 
         try:
@@ -428,20 +419,13 @@ class LLMAnalysisPlugin(Plugin):
                 market_max=10,
                 macro_days=3,
                 macro_max=5,
-                # 传入全局缓存，避免每只股票重复抓取市场/宏观新闻
                 cached_market_ctx=self.cached_market_ctx,
                 cached_macro_ctx=self.cached_macro_ctx,
             )
 
-            if success and self.analyzer and hasattr(self.analyzer, 'summarize_news'):
-                summarized = self.analyzer.summarize_news(stock_ctx, market_ctx, macro_ctx)
-                if summarized:
-                    logger.info(f"三类新闻汇总成功: {name}({code})")
-                    return summarized
-
             raw_parts = [p for p in [stock_ctx, market_ctx, macro_ctx] if p]
             if raw_parts:
-                logger.info(f"三类新闻搜索成功(未汇总): {name}({code})")
+                logger.info(f"三类新闻搜索成功: {name}({code})")
                 return "\n\n".join(raw_parts)
 
             logger.warning(f"三类新闻搜索返回空: {name}({code})")
