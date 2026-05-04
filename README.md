@@ -48,7 +48,7 @@ plugins:
   llm_analysis:
     enabled: true
     primary_model: "gemini-2.5-flash"      # 主模型
-    fallback_model: "deepseek-reasoner"    # 备用模型
+    fallback_model: "deepseek-v4-flash"    # 备用模型
     api_key: ""                            # 留空使用环境变量
 ```
 

@@ -76,7 +76,7 @@ class LLMAnalysisPlugin(Plugin):
             fallback_model = (
                 nested.get("fallback_model")
                 or self.config.get("fallback_model")
-                or os.environ.get("LLM_FALLBACK_MODEL", "deepseek-reasoner")
+                or os.environ.get("LLM_FALLBACK_MODEL", "deepseek-v4-flash")
             )
 
             if "gemini" in str(primary_model).lower():
