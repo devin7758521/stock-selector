@@ -472,16 +472,13 @@ def _search_macro_news_list(days, max_results) -> List[NewsResult]:
 def _format_news_context(news_list: List[NewsResult], title: str) -> str:
     if not news_list:
         return ""
-    good = sum(1 for n in news_list if n.sentiment == "利好")
-    bad  = sum(1 for n in news_list if n.sentiment == "利空")
-    lines = [f"【{title}】利好:{good} 利空:{bad}"]
+    lines = [f"【{title}】共{len(news_list)}条"]
     for i, news in enumerate(news_list, 1):
-        emoji = "📈" if news.sentiment == "利好" else "📉" if news.sentiment == "利空" else "📊"
         if news.content and len(news.content) > 10:
-            brief = news.content[:60].replace("\n", " ").strip()
-            lines.append(f"{i}.{emoji}{news.title}｜{brief}")
+            brief = news.content[:80].replace("\n", " ").strip()
+            lines.append(f"{i}. {news.title}｜{brief}")
         else:
-            lines.append(f"{i}.{emoji}{news.title}")
+            lines.append(f"{i}. {news.title}")
     return "\n".join(lines)
 
 
