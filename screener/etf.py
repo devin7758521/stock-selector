@@ -1,1 +1,0 @@
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=kline_dayqfq&param={key},day,,,640,qfq"
