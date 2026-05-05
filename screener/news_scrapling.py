@@ -20,6 +20,7 @@ Copyright (c) 2026 stock selector
 
 import logging
 import os
+import random
 import re
 import time
 from typing import List, Dict, Optional, Set
@@ -83,6 +84,88 @@ def _get_scrapling_mode() -> str:
     return os.environ.get("SCRAPLING_MODE", "basic").lower()
 
 
+# 反封控配置
+_RETRY_MAX = 2                # 每个源最多重试次数
+_RETRY_BACKOFF_BASE = 1.5     # 退避基数（秒）
+_RETRY_JITTER = 0.8           # 随机抖动上限（秒）
+_SOURCE_FAILURE_LIMIT = 5     # 单源累计失败上限（跨调用共享）
+_source_failures: Dict[str, int] = {}
+
+# 代理支持：设置 SCRAPLING_PROXY=http://user:pass@host:port
+_SCRAPLING_PROXY = os.environ.get("SCRAPLING_PROXY", "")
+
+
+def _is_blocked(page_or_err) -> bool:
+    """检测是否被反爬/封控（403/429/503/captcha）"""
+    status = 0
+    if hasattr(page_or_err, 'status_code'):
+        status = getattr(page_or_err, 'status_code', 0)
+    elif hasattr(page_or_err, 'status'):
+        status = getattr(page_or_err, 'status', 0)
+    status_str = str(status)
+    if status_str in ("403", "429", "503"):
+        return True
+    err_text = str(page_or_err)[:300].lower()
+    blocked_signals = ["captcha", "verify", "blocked", "too many requests",
+                       "rate limit", "access denied", "forbidden"]
+    return any(sig in err_text for sig in blocked_signals)
+
+
+def _skip_source(src_name: str) -> bool:
+    """单源累计失败超限则跳过"""
+    return _source_failures.get(src_name, 0) >= _SOURCE_FAILURE_LIMIT
+
+
+def _record_source_failure(src_name: str):
+    _source_failures[src_name] = _source_failures.get(src_name, 0) + 1
+    if _source_failures[src_name] >= _SOURCE_FAILURE_LIMIT:
+        logger.warning(f"新闻源 {src_name} 累计失败{_SOURCE_FAILURE_LIMIT}次，后续跳过")
+
+
+def _record_source_success(src_name: str):
+    if _source_failures.get(src_name, 0) > 0:
+        _source_failures[src_name] = max(0, _source_failures[src_name] - 1)
+
+
+def _scrape_url(url: str, timeout: int = 20):
+    """
+    统一的页面抓取（带代理和反封控退避）。
+    返回 page 或抛出异常。
+    """
+    import random
+
+    mode = _get_scrapling_mode()
+    proxy = _SCRAPLING_PROXY or None
+
+    for attempt in range(_RETRY_MAX + 1):
+        try:
+            if mode == "stealth":
+                from scrapling.fetchers import StealthyFetcher
+                kwargs = {"headless": True, "network_idle": True, "timeout": timeout}
+                if proxy:
+                    kwargs["proxy"] = proxy
+                page = StealthyFetcher.fetch(url, **kwargs)
+            else:
+                from scrapling.fetchers import Fetcher
+                kwargs = {"timeout": timeout}
+                if proxy:
+                    kwargs["proxy"] = proxy
+                page = Fetcher.get(url, **kwargs)
+
+            if _is_blocked(page):
+                raise ConnectionError(f"Blocked: {getattr(page, 'status_code', '?')}")
+
+            return page
+
+        except Exception as e:
+            if attempt < _RETRY_MAX:
+                delay = _RETRY_BACKOFF_BASE * (2 ** attempt) + random.uniform(0, _RETRY_JITTER)
+                logger.debug(f"请求 {url[:60]} 失败({e})，{delay:.1f}s 后重试 ({attempt+1}/{_RETRY_MAX})")
+                time.sleep(delay)
+            else:
+                raise
+
+
 def _dedup_key(title: str) -> str:
     """生成去重键：标题前 50 字符小写"""
     return (title or "")[:50].lower().strip()
@@ -137,38 +220,23 @@ def scrapling_stock_news(
     mode = _get_scrapling_mode()
 
     try:
-        if mode == "stealth":
-            from scrapling.fetchers import StealthyFetcher
-            logger.info("Scrapling mode: stealth (Playwright / patchright)")
+        logger.info("Scrapling mode: %s", mode)
 
-            for src_name, url_tpl, css_sel, lang in SCRAPLING_NEWS_SOURCES_A_STOCK:
-                if len(all_news) >= max_total:
-                    break
-                try:
-                    url = url_tpl.format(code=code_6, name=stock_name or code_6)
-                    page = StealthyFetcher.fetch(url, headless=True, network_idle=True, timeout=15)
-                    _collect_from_page(page, css_sel, src_name, max_per_source,
-                                       seen_titles, all_news, max_total)
-                    time.sleep(0.3)
-                except Exception as e:
-                    logger.debug(f"Scrapling stealth {src_name} ({code_6}): {e}")
-
-        else:
-            # basic 模式：Fetcher 用 .get()，不是 .fetch()
-            from scrapling.fetchers import Fetcher
-            logger.info("Scrapling mode: basic (HTTP via curl_cffi)")
-
-            for src_name, url_tpl, css_sel, lang in SCRAPLING_NEWS_SOURCES_A_STOCK:
-                if len(all_news) >= max_total:
-                    break
-                try:
-                    url = url_tpl.format(code=code_6, name=stock_name or code_6)
-                    page = Fetcher.get(url, timeout=15)      # ← 关键修复：.get() 非 .fetch()
-                    _collect_from_page(page, css_sel, src_name, max_per_source,
-                                       seen_titles, all_news, max_total)
-                    time.sleep(0.3)
-                except Exception as e:
-                    logger.debug(f"Scrapling basic {src_name} ({code_6}): {e}")
+        for src_name, url_tpl, css_sel, lang in SCRAPLING_NEWS_SOURCES_A_STOCK:
+            if len(all_news) >= max_total:
+                break
+            if _skip_source(src_name):
+                continue
+            try:
+                url = url_tpl.format(code=code_6, name=stock_name or code_6)
+                page = _scrape_url(url, timeout=15)
+                _collect_from_page(page, css_sel, src_name, max_per_source,
+                                   seen_titles, all_news, max_total)
+                _record_source_success(src_name)
+                time.sleep(0.5 + random.uniform(0, 0.6))
+            except Exception as e:
+                _record_source_failure(src_name)
+                logger.debug(f"Scrapling {src_name} ({code_6}): {e}")
 
         if all_news:
             logger.info(f"Scrapling 个股新闻({code_6}): 获取到 {len(all_news)} 条")
@@ -210,35 +278,21 @@ def scrapling_market_news(
     ]
 
     try:
-        if mode == "stealth":
-            from scrapling.fetchers import StealthyFetcher
-
-            for src_name, url_tpl, css_sel, lang in macro_sources:
-                if len(all_news) >= max_total:
-                    break
-                try:
-                    url = url_tpl.format(code="", name="")
-                    page = StealthyFetcher.fetch(url, headless=True, network_idle=True, timeout=15)
-                    _collect_from_page(page, css_sel, src_name, max_per_source,
-                                       seen_titles, all_news, max_total)
-                    time.sleep(0.3)
-                except Exception as e:
-                    logger.debug(f"Scrapling stealth 宏观 {src_name}: {e}")
-
-        else:
-            from scrapling.fetchers import Fetcher
-
-            for src_name, url_tpl, css_sel, lang in macro_sources:
-                if len(all_news) >= max_total:
-                    break
-                try:
-                    url = url_tpl.format(code="", name="")
-                    page = Fetcher.get(url, timeout=15)      # ← 关键修复
-                    _collect_from_page(page, css_sel, src_name, max_per_source,
-                                       seen_titles, all_news, max_total)
-                    time.sleep(0.3)
-                except Exception as e:
-                    logger.debug(f"Scrapling basic 宏观 {src_name}: {e}")
+        for src_name, url_tpl, css_sel, lang in macro_sources:
+            if len(all_news) >= max_total:
+                break
+            if _skip_source(src_name):
+                continue
+            try:
+                url = url_tpl.format(code="", name="")
+                page = _scrape_url(url, timeout=15)
+                _collect_from_page(page, css_sel, src_name, max_per_source,
+                                   seen_titles, all_news, max_total)
+                _record_source_success(src_name)
+                time.sleep(0.5 + random.uniform(0, 0.6))
+            except Exception as e:
+                _record_source_failure(src_name)
+                logger.debug(f"Scrapling 宏观 {src_name}: {e}")
 
         if all_news:
             logger.info(f"Scrapling 市场新闻: 获取到 {len(all_news)} 条")
@@ -274,35 +328,21 @@ def scrapling_policy_news(
     mode = _get_scrapling_mode()
 
     try:
-        if mode == "stealth":
-            from scrapling.fetchers import StealthyFetcher
-
-            for src_name, url_tpl, css_sel, lang in SCRAPLING_POLICY_SOURCES:
-                if len(all_news) >= max_total:
-                    break
-                try:
-                    url = url_tpl.format(code="", name="")
-                    page = StealthyFetcher.fetch(url, headless=True, network_idle=True, timeout=20)
-                    _collect_from_page(page, css_sel, src_name, max_per_source,
-                                       seen_titles, all_news, max_total)
-                    time.sleep(0.4)
-                except Exception as e:
-                    logger.debug(f"Scrapling stealth 政策 {src_name}: {e}")
-
-        else:
-            from scrapling.fetchers import Fetcher
-
-            for src_name, url_tpl, css_sel, lang in SCRAPLING_POLICY_SOURCES:
-                if len(all_news) >= max_total:
-                    break
-                try:
-                    url = url_tpl.format(code="", name="")
-                    page = Fetcher.get(url, timeout=20)
-                    _collect_from_page(page, css_sel, src_name, max_per_source,
-                                       seen_titles, all_news, max_total)
-                    time.sleep(0.4)
-                except Exception as e:
-                    logger.debug(f"Scrapling basic 政策 {src_name}: {e}")
+        for src_name, url_tpl, css_sel, lang in SCRAPLING_POLICY_SOURCES:
+            if len(all_news) >= max_total:
+                break
+            if _skip_source(src_name):
+                continue
+            try:
+                url = url_tpl.format(code="", name="")
+                page = _scrape_url(url, timeout=20)
+                _collect_from_page(page, css_sel, src_name, max_per_source,
+                                   seen_titles, all_news, max_total)
+                _record_source_success(src_name)
+                time.sleep(0.5 + random.uniform(0, 0.8))
+            except Exception as e:
+                _record_source_failure(src_name)
+                logger.debug(f"Scrapling 政策 {src_name}: {e}")
 
         if all_news:
             logger.info(f"Scrapling 政策/宏观新闻: 获取到 {len(all_news)} 条")
