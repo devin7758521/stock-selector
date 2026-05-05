@@ -37,8 +37,10 @@ plugins:
     primary_model: "gemini-2.5-flash"      # 主模型
     fallback_model: "deepseek-v4-flash"   # 备用模型（当主模型失败时自动切换）
     api_key: ""                           # 主模型API Key（留空则使用环境变量）
+    deep_analysis_model: "deepseek-v4-pro"  # Top3 深度推理专用模型
     # 三级降级：Gemini(#1) → Gemini(#2) → DeepSeek
     # 设置环境变量 GEMINI_API_KEY_2 和 GEMINI_MODEL_2 启用第二 Gemini Key
+    # 设置环境变量 DEEP_ANALYSIS_MODEL 覆盖深度推理模型
   stock_list_analysis:
     enabled: true
   technical_analysis:

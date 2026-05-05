@@ -357,6 +357,25 @@ class LLMAnalysisPlugin(Plugin):
             logger.error(f"LLM推理筛选失败: {e}")
             return stock_results[:top_n]
 
+    def analyze_top3(self, top3_results: List[Dict]) -> Optional[str]:
+        """
+        对 Top3 股票进行深度链式推理分析。
+
+        Args:
+            top3_results: 前 3 只股票的结果列表
+
+        Returns:
+            深度分析文本，失败返回 None
+        """
+        if not self.analyzer:
+            logger.warning("LLM分析器未初始化，无法进行Top3深度分析")
+            return None
+        try:
+            return self.analyzer.deep_analyze_top3(top3_results)
+        except Exception as e:
+            logger.error(f"Top3深度分析失败: {e}")
+            return None
+
     def _build_context(self, stock_data: Dict[str, Any], df: Any) -> Dict[str, Any]:
         """
         构建分析上下文

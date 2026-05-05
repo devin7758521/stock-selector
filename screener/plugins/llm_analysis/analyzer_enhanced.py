@@ -443,11 +443,12 @@ class EnhancedLLMAnalyzer:
 1. 指出各维度之间是否存在矛盾或共振
 2. 说明哪个维度是当前最关键的驱动因素
 3. 给出一段80-150字的综合投资理由，解释为什么该股值得或不值得投资
+4. 给出一个0-100的推理评分（信心加权分），末尾单独一行写：推理评分: XX
 
 语气要专业、客观、有逻辑性，避免套话。"""
 
         try:
-            synthesis = self.deepseek_analyzer.synthesize(user_prompt, max_tokens=300)
+            synthesis = self.deepseek_analyzer.synthesize(user_prompt, max_tokens=400)
             if synthesis:
                 logger.info(f"LLM综合推理成功: {synthesis[:80]}...")
                 return synthesis
@@ -554,22 +555,76 @@ class EnhancedLLMAnalyzer:
 
     def _parse_inference_score(self, synthesis: str, weighted_score: float, stars: int, volume: float = 0) -> float:
         """
-        从LLM推理文本中解析出量化评分
+        从LLM推理文本中解析出量化评分。
 
-        推理评分 = 加权分×90% + 推理有效性分×5% + 成交量权重×5%
-        推理有效性：有非空推理文本即给少量加分，不按关键词命中加分（避免误导）
-        成交量权重：成交量大的股票获得轻微加分（最高+5分）
+        权重分配：LLM推理分×40% + 加权分×45% + 成交量权重×15%
+        其中 LLM推理分从文本中提取（默认退回加权分），成交量权重小幅影响。
         """
+        llm_inferred = self._extract_llm_score(synthesis) if synthesis else None
+
         base_score = weighted_score
 
         quality_bonus = 0.0
         if synthesis and synthesis.strip():
-            # 有有效推理文本即给基础分，不再根据文本内容关键词加分
-            quality_bonus = 5.0
+            if len(synthesis) > 60:
+                quality_bonus = 5.0
+            elif len(synthesis) > 20:
+                quality_bonus = 2.0
 
         volume_bonus = 0.0
         if volume and volume > 0:
             volume_bonus = min(5.0, (volume / 100000000) * 0.5)
 
-        inference_score = base_score * 0.90 + quality_bonus * 1.0 + volume_bonus
+        if llm_inferred is not None:
+            inference_score = base_score * 0.45 + llm_inferred * 0.40 + quality_bonus + volume_bonus
+        else:
+            inference_score = base_score * 0.90 + quality_bonus + volume_bonus
+
         return min(100, inference_score)
+
+    @staticmethod
+    def _extract_llm_score(synthesis: str) -> Optional[float]:
+        """从 LLM 合成文本中提取推理评分"""
+        import re
+        patterns = [
+            r'推理评分[：:]\s*(\d+(?:\.\d+)?)',
+            r'推理分[：:]\s*(\d+(?:\.\d+)?)',
+            r'inference.?score[：:=]\s*(\d+(?:\.\d+)?)',
+        ]
+        for pat in patterns:
+            m = re.search(pat, synthesis, re.IGNORECASE)
+            if m:
+                try:
+                    return float(m.group(1))
+                except ValueError:
+                    pass
+        return None
+
+    def deep_analyze_top3(self, top3: List[Dict]) -> Optional[str]:
+        """
+        对 Top3 进行深度链式推理分析（使用 DeepSeek V4 Pro）。
+
+        Args:
+            top3: 前 3 只股票的结果列表（至少 3 只）
+
+        Returns:
+            深度分析文本，失败返回 None
+        """
+        if not self.deepseek_analyzer or len(top3) < 1:
+            logger.warning("deep_analyze_top3: 分析器未初始化或数据不足")
+            return None
+
+        # 补齐到3只（不足则用空占位）
+        stocks = list(top3[:3])
+        while len(stocks) < 3:
+            stocks.append({"name": "无", "code": "无", "llm_stars": 0, "llm_weighted_score": 0})
+
+        logger.info(f"开始 Top3 深度链式推理: {[s.get('name') for s in stocks]}")
+        try:
+            analysis = self.deepseek_analyzer.deep_analyze_top3(
+                stocks[0], stocks[1], stocks[2]
+            )
+            return analysis
+        except Exception as e:
+            logger.error(f"Top3深度分析失败: {e}", exc_info=True)
+            return None

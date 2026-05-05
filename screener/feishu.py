@@ -350,6 +350,99 @@ def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Di
         return False
 
 
+def send_feishu_top3_analysis(analysis_text: str, cfg: dict) -> bool:
+    """
+    发送 Top3 深度分析到飞书（富文本卡片）
+
+    Args:
+        analysis_text: LLM 生成的深度分析全文
+        cfg: 完整 config dict
+
+    Returns:
+        是否推送成功
+    """
+    webhook_url = cfg.get("feishu", {}).get("webhook_url", "").strip()
+    if not webhook_url:
+        logger.warning("未配置飞书 webhook_url，跳过Top3深度分析推送")
+        return False
+
+    # 飞书卡片单条消息有长度限制，超长则分段
+    FEISHU_MAX_PER_CARD = 5500
+
+    # 把分析文本按分段标题切割
+    sections = _split_analysis_into_sections(analysis_text, FEISHU_MAX_PER_CARD)
+
+    today = datetime.today().strftime("%Y-%m-%d")
+
+    for idx, section_text in enumerate(sections):
+        section_label = f"（{idx+1}/{len(sections)}）" if len(sections) > 1 else ""
+
+        payload = {
+            "msg_type": "interactive",
+            "card": {
+                "header": {
+                    "title": {
+                        "tag": "plain_text",
+                        "content": f"🔬 Top3 深度推理分析 {today} {section_label}"
+                    },
+                    "template": "blue"
+                },
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": section_text.replace("\n", "\n\n")
+                        }
+                    }
+                ]
+            }
+        }
+
+        try:
+            resp = requests.post(webhook_url, json=payload, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("code") == 0 or data.get("StatusCode") == 0:
+                logger.info(f"Top3深度分析推送成功 {section_label}")
+            else:
+                logger.error(f"Top3深度分析推送失败: {data}")
+                return False
+        except Exception as e:
+            logger.error(f"Top3深度分析推送异常: {e}")
+            return False
+
+    return True
+
+
+def _split_analysis_into_sections(text: str, max_len: int) -> list:
+    """按分隔线切割长文本，每段不超过 max_len 字符"""
+    if len(text) <= max_len:
+        return [text]
+
+    # 优先按 ─══ 等分隔线切割
+    import re
+    sections = re.split(r'\n?(?:═══+|───+|────+)\n?', text)
+    result = []
+    current = ""
+    for sec in sections:
+        sec = sec.strip()
+        if not sec:
+            continue
+        if len(current) + len(sec) + 4 <= max_len:
+            if current:
+                current += "\n\n───\n\n" + sec
+            else:
+                current = sec
+        else:
+            if current:
+                result.append(current)
+            current = sec
+    if current:
+        result.append(current)
+    return result if result else [text[:max_len]]
+
+
 def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[List[Dict]] = None, sniper_hits: Optional[Dict] = None) -> bool:
     """
     发送飞书卡片消息（富文本格式），板块+Top10合并推送

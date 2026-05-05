@@ -105,6 +105,96 @@ SYNTHESIS_SYSTEM_PROMPT = """你是A股研究助理。根据用户给出的多�
 - 若某维度明显信息不足，要明确写出「信息不足」，不要臆测。
 - 结尾用一句话呼应用户给出的「操作建议标签」（如持有/观望/买入等），但不要与前面推理矛盾。"""
 
+TOP3_DEEP_SYSTEM_PROMPT = """你是A股资深投资分析师，拥有20年从业经验。请使用链式推理（Chain-of-Thought）方法，逐步展示你的完整分析过程。
+
+【硬性要求】
+1. 必须逐步推理，不能跳跃，每一步都要写出来
+2. 只使用提供的材料，不得编造任何数据、新闻或政策
+3. 信息不足的维度明确写"信息不足"，不要臆测
+4. 分析要具体，避免套话（如"建议关注"要说明关注什么）
+5. 语气专业、客观、冷静，不煽动情绪"""
+
+TOP3_DEEP_USER_PROMPT_TEMPLATE = """请对以下3只精选股票进行深度链式推理分析：
+
+{stock1_data}
+
+{stock2_data}
+
+{stock3_data}
+
+【分析要求】
+
+═══════════════════════════════════
+一、逐只深度分析（每只 300-500 字）
+═══════════════════════════════════
+
+对每只股票，按以下步骤逐步推理：
+
+**{stock1_name}（{stock1_code}）**
+1.1 技术面推理：
+  - 解读 MACD/KDJ/RSI/均线 等指标的具体信号
+  - 判断当前处于上升/下降/震荡的哪个阶段
+  - 多空力量对比：多方理由 vs 空方理由
+
+1.2 消息面推理：
+  - 从新闻中提取最关键的 2-3 个信息点
+  - 判断市场情绪偏向（恐慌/悲观/中性/乐观/狂热）
+  - 消息的时效性和影响力评估
+
+1.3 政策面推理：
+  - 当前政策环境对该股/行业的影响方向
+  - 政策力度：强刺激/温和支持/中性/收紧/强打压
+
+1.4 市场环境推理：
+  - 大盘环境和资金面判断
+  - 板块联动效应：所属板块是否强势
+  - 成交量是否配合
+
+1.5 多空博弈综合：
+  - 列出 3-5 个看多因素
+  - 列出 3-5 个看空因素
+  - 判断哪方占优，给出置信度
+
+**{stock2_name}（{stock2_code}）**
+（按同样步骤 2.1-2.5 分析）
+
+**{stock3_name}（{stock3_code}）**
+（按同样步骤 3.1-3.5 分析）
+
+═══════════════════════════════════
+二、横向对比分析
+═══════════════════════════════════
+
+4.1 三只股票的核心差异是什么？（行业/风格/驱动逻辑的不同）
+4.2 哪只风险收益比最优？为什么？
+4.3 如果只选一只，选谁？请给出有说服力的理由。
+
+═══════════════════════════════════
+三、最终排名和投资建议
+═══════════════════════════════════
+
+5.1 按投资价值排序（第1名/第2名/第3名），每只50字理由
+5.2 对每只给出具体操作建议和仓位参考（激进/稳健/保守三种风格）
+5.3 列出需要持续跟踪的关键信号（什么情况下应该改变判断）
+
+═══════════════════════════════════
+四、量化评分表
+═══════════════════════════════════
+
+用以下格式输出评分表（方便系统解析）：
+
+| 排名 | 股票 | 技术面(25) | 消息面(25) | 政策面(15) | 市场环境(15) | 多空博弈(20) | 总分(100) |
+|------|------|-----------|-----------|-----------|-------------|------------|----------|
+|  1   | XXX  |    XX     |    XX     |    XX     |     XX      |     XX     |    XX    |
+|  2   | XXX  |    XX     |    XX     |    XX     |     XX      |     XX     |    XX    |
+|  3   | XXX  |    XX     |    XX     |    XX     |     XX      |     XX     |    XX    |
+
+注意：评分表必须严格按 Markdown 表格格式输出，总分必须是各项之和。"""
+
+DEEPSEEK_V4_PRO_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEP_ANALYSIS_MODEL = "deepseek-v4-pro"
+
+
 NEWS_SUMMARIZE_PROMPT = """你是一个新闻聚合助手。请对以下三类新闻进行汇总，生成一段简洁的中文摘要（100-200字），供后续投资分析使用。
 
 【新闻分类】
@@ -326,6 +416,165 @@ class LLMNewsAnalyzer:
 
         user_prompt = "\n\n".join(parts)
         return self.synthesize(f"{NEWS_SUMMARIZE_PROMPT}\n\n{user_prompt}", max_tokens=800)
+
+    def deep_analyze_top3(self, stock1: Dict[str, Any], stock2: Dict[str, Any],
+                          stock3: Dict[str, Any]) -> Optional[str]:
+        """
+        对 Top3 股票进行深度链式推理分析，使用 DeepSeek V4 Pro。
+
+        每只股票的数据应包含：
+        - name, code
+        - llm_stars, llm_weighted_score
+        - llm_technical_detail, llm_news_detail, llm_policy_detail, llm_market_detail
+        - news_headlines, policy_info, macro_info, llm_news_reason
+        - ai_buy_signal, ai_signal_score（可选）
+
+        Returns:
+            深度分析文本，失败返回 None
+        """
+
+        def _format_stock(r: Dict[str, Any], label: str) -> str:
+            stars = r.get("llm_stars", 0) or 0
+            star_icon = "⭐" * stars if stars > 0 else "无星"
+            ws = r.get("llm_weighted_score", r.get("weighted_score", 50))
+            advice = r.get("llm_operation_advice", "N/A")
+
+            lines = [
+                f"【{label}】{r.get('name', '?')}（{r.get('code', '?')}）",
+                f"评级：{star_icon}  |  加权分：{ws:.1f}  |  建议：{advice}",
+                "",
+            ]
+
+            tech = r.get("llm_technical_detail") or r.get("technical_analysis_detail") or ""
+            if tech and tech != "N/A":
+                lines.append(f"技术面：{tech}")
+
+            news_d = r.get("llm_news_detail") or r.get("news_analysis_detail") or ""
+            if news_d and news_d != "N/A":
+                lines.append(f"消息面：{news_d}")
+
+            headlines = r.get("news_headlines", "")
+            if headlines:
+                lines.append(f"新闻摘要：{headlines}")
+
+            policy_d = r.get("llm_policy_detail") or r.get("policy_analysis_detail") or ""
+            pi = r.get("policy_info", "")
+            if pi and pi not in ("信息不足", "", "N/A"):
+                policy_d = f"{policy_d}。{pi}" if policy_d else pi
+            if policy_d and policy_d != "N/A":
+                lines.append(f"政策面：{policy_d}")
+
+            market_d = r.get("llm_market_detail") or r.get("market_environment_analysis") or ""
+            mi = r.get("macro_info", "")
+            if mi and mi not in ("信息不足", "", "N/A"):
+                market_d = f"{market_d}。{mi}" if market_d else mi
+            if market_d and market_d != "N/A":
+                lines.append(f"市场环境：{market_d}")
+
+            llm_reason = r.get("llm_news_reason", "")
+            if llm_reason:
+                lines.append(f"LLM新闻推理：{llm_reason}")
+
+            ai_signal = r.get("ai_buy_signal", "")
+            ai_score = r.get("ai_signal_score", 50)
+            if ai_signal and ai_signal != "N/A":
+                lines.append(f"AI信号：{ai_signal}（评分{ai_score}）")
+
+            rec = r.get("llm_recommendation_reason") or r.get("recommendation_reason", "")
+            if rec:
+                lines.append(f"综合理由：{rec}")
+
+            return "\n".join(lines)
+
+        stock1_data = _format_stock(stock1, "股票A")
+        stock2_data = _format_stock(stock2, "股票B")
+        stock3_data = _format_stock(stock3, "股票C")
+
+        user_prompt = TOP3_DEEP_USER_PROMPT_TEMPLATE.format(
+            stock1_data=stock1_data,
+            stock2_data=stock2_data,
+            stock3_data=stock3_data,
+            stock1_name=stock1.get("name", "?"),
+            stock1_code=stock1.get("code", "?"),
+            stock2_name=stock2.get("name", "?"),
+            stock2_code=stock2.get("code", "?"),
+            stock3_name=stock3.get("name", "?"),
+            stock3_code=stock3.get("code", "?"),
+        )
+
+        # 用环境变量可切换模型
+        deep_model = os.environ.get("DEEP_ANALYSIS_MODEL", DEEP_ANALYSIS_MODEL)
+        logger.info(f"Top3深度分析开始，使用模型: {deep_model}")
+
+        # 三级降级：先尝试 DeepSeek Pro
+        results = []
+        providers = []
+        if self.deepseek_api_key:
+            providers.append(("deepseek", self.deepseek_api_key, deep_model))
+        if self.api_key and self.api_key != self.deepseek_api_key:
+            providers.append(("deepseek", self.api_key, deep_model))
+        # 最后一招：用主模型（Gemini）的 synthesize
+        if self.api_key and "gemini" in self.model.lower():
+            providers.append(("gemini_synth", self.api_key, self.model_name))
+
+        for pname, pkey, pmodel in providers:
+            try:
+                if pname in ("deepseek",):
+                    text = self._call_deepseek_raw(
+                        system_prompt=TOP3_DEEP_SYSTEM_PROMPT,
+                        user_prompt=user_prompt,
+                        api_key=pkey,
+                        model=pmodel,
+                        max_tokens=4096,
+                        temperature=0.4,
+                    )
+                    if text and len(text) > 200:
+                        logger.info(f"Top3深度分析成功(provider={pname}, model={pmodel}), {len(text)}字")
+                        return text
+                    results.append((pname, text))
+                else:
+                    text = self._synthesize_gemini(user_prompt, max_tokens=4096)
+                    if text and len(text) > 200:
+                        logger.info(f"Top3深度分析成功(provider=gemini_synth), {len(text)}字")
+                        return text
+                    results.append(("gemini_synth", text))
+            except Exception as e:
+                logger.warning(f"Top3深度分析 provider={pname} 失败: {e}")
+                results.append((pname, None))
+
+        logger.error(f"Top3深度分析全部失败: {results}")
+        return None
+
+    def _call_deepseek_raw(self, system_prompt: str, user_prompt: str,
+                           api_key: str, model: str,
+                           max_tokens: int = 4096,
+                           temperature: float = 0.4) -> Optional[str]:
+        """直接调用 DeepSeek API，不使用 synthesize 的 fallback 逻辑"""
+        import requests
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        try:
+            resp = requests.post(DEEPSEEK_V4_PRO_URL, headers=headers, json=payload, timeout=120)
+            if resp.status_code != 200:
+                logger.error(f"DeepSeek raw API 失败: {resp.status_code} - {resp.text[:300]}")
+                return None
+            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            return content.strip() if content else None
+        except Exception as e:
+            logger.error(f"DeepSeek raw API 异常: {e}")
+            return None
 
     def _synthesize_deepseek(self, user_prompt: str, max_tokens: int) -> Optional[str]:
         import requests

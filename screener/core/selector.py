@@ -13,7 +13,7 @@ from screener.utils import load_config
 from screener.datasources import fetch_stock_list, fetch_daily_kline, fetch_spot_data
 from screener.filter import static_filter, calc_indicators, print_stats
 from screener.sector import filter_sector_weekly
-from screener.feishu import send_feishu, send_feishu_card, send_feishu_start
+from screener.feishu import send_feishu, send_feishu_card, send_feishu_start, send_feishu_top3_analysis
 from .plugin import PluginManager
 
 logger = logging.getLogger("stock_selector.selector")
@@ -311,7 +311,28 @@ class StockSelector:
             logger.warning("LLM插件不支持推理筛选")
             ranked_results = sorted_results
 
-        # Step 5.6: 狙击手存储（7日历史，累计入选提醒）
+        # Step 5.6: Top3 深度链式推理分析（使用 DeepSeek V4 Pro）
+        logger.info("Step 5.6: Top3 深度链式推理分析...")
+        top3_analysis_text = None
+        top3 = [r for r in ranked_results[:3] if r.get("name") and r.get("name") != "无"]
+        if len(top3) >= 1 and llm_plugin and hasattr(llm_plugin, 'analyze_top3'):
+            try:
+                top3_analysis_text = llm_plugin.analyze_top3(top3)
+                if top3_analysis_text:
+                    logger.info(
+                        f"Top3深度分析完成，{len(top3_analysis_text)} 字: "
+                        f"{top3_analysis_text[:100]}..."
+                    )
+                    for r in top3:
+                        r["top3_deep_analysis"] = top3_analysis_text
+                else:
+                    logger.warning("Top3深度分析返回空（可能有API配置问题）")
+            except Exception as e:
+                logger.warning(f"Top3深度分析异常: {e}")
+        else:
+            logger.warning(f"跳过Top3深度分析: top3={len(top3)}只, plugin={bool(llm_plugin)}")
+
+        # Step 5.7: 狙击手存储（7日历史，累计入选提醒）
         sniper_hits = {}
         try:
             from screener.sniper_store import save_daily_results, get_multi_day_hits
@@ -326,5 +347,13 @@ class StockSelector:
         logger.info("Step 6: 推送飞书...")
         sector_res = getattr(self, 'sector_results', None)
         send_feishu_card(ranked_results, self.config, sector_results=sector_res, sniper_hits=sniper_hits)
+
+        # Step 6.5: 推送 Top3 深度分析（独立卡片）
+        if top3_analysis_text:
+            logger.info("Step 6.5: 推送 Top3 深度分析...")
+            try:
+                send_feishu_top3_analysis(top3_analysis_text, self.config)
+            except Exception as e:
+                logger.warning(f"Top3深度分析推送失败: {e}")
 
         return ranked_results
