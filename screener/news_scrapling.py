@@ -50,6 +50,33 @@ SCRAPLING_NEWS_SOURCES_A_STOCK = [
                       "article a[title]::attr(title)", "en"),
 ]
 
+# 政策/宏观专用新闻源（独立于个股抓取，解决"信息不足"）
+SCRAPLING_POLICY_SOURCES = [
+    # 国内政策
+    ("财联社电报",   "https://www.cls.cn/searchPage?keyword=政策+宏观&type=telegraph",
+                     ".telegraph-content-box::text, .telegraph-list .title::text", "zh"),
+    ("财联社要闻",   "https://www.cls.cn/searchPage?keyword=A股+央行&type=all",
+                     ".c-article-title::text, .search-article-item h3::text", "zh"),
+    ("新华网财经",   "http://www.news.cn/fortune/search.htm?searchword=政策+A股",
+                     ".news-item h3::text, .search-result h3 a::text, .tit::text", "zh"),
+    ("东方财富政策", "https://so.eastmoney.com/web/s?keyword=央行+货币政策+财政政策+A股",
+                     "h3 a::text, .title a::text", "zh"),
+    # 国际形势
+    ("Reuters中文",  "https://cn.reuters.com/search/news?query=中国+经济+政策+贸易",
+                     ".search-result-title::text, h3.article-headline::text", "zh"),
+    ("华尔街见闻",   "https://wallstreetcn.com/search?q=宏观+政策+美联储",
+                     ".article-item .title::text, .search-result-item h3::text", "zh"),
+    ("BBC中文",      "https://www.bbc.com/zhongwen/simp/search?q=中国经济贸易",
+                     ".title-wrapper h3::text, .promo-heading__title::text, h3::text", "zh"),
+    ("新浪国际财经", "https://search.sina.com.cn/?q=美联储+贸易战+关税+国际形势&range=all&c=news",
+                     ".box-result a::text, .result a::text", "zh"),
+    # 监管/部委
+    ("证监会",       "https://search.sina.com.cn/?q=证监会+监管+政策&range=all&c=news",
+                     ".box-result a::text", "zh"),
+    ("央行",         "https://search.sina.com.cn/?q=央行+降息+降准+LPR+MLF&range=all&c=news",
+                     ".box-result a::text", "zh"),
+]
+
 
 def _get_scrapling_mode() -> str:
     """获取 Scrapling 模式：basic 或 stealth"""
@@ -224,10 +251,74 @@ def scrapling_market_news(
     return all_news[:max_total]
 
 
+def scrapling_policy_news(
+    max_per_source: int = 5,
+    max_total: int = 20,
+    seen_titles: Optional[Set[str]] = None,
+) -> List[NewsResult]:
+    """
+    使用 Scrapling 抓取政策/宏观/国际形势新闻（独立于个股/市场抓取）。
+
+    专门解决"信息不足"问题，覆盖：
+    - 国内政策（财联社/新华网/东方财富政策）
+    - 国际形势（Reuters中文/华尔街见闻/BBC中文/新浪国际）
+    - 监管/部委（证监会/央行）
+
+    Returns:
+        新闻列表
+    """
+    if seen_titles is None:
+        seen_titles = set()
+
+    all_news: List[NewsResult] = []
+    mode = _get_scrapling_mode()
+
+    try:
+        if mode == "stealth":
+            from scrapling.fetchers import StealthyFetcher
+
+            for src_name, url_tpl, css_sel, lang in SCRAPLING_POLICY_SOURCES:
+                if len(all_news) >= max_total:
+                    break
+                try:
+                    url = url_tpl.format(code="", name="")
+                    page = StealthyFetcher.fetch(url, headless=True, network_idle=True, timeout=20)
+                    _collect_from_page(page, css_sel, src_name, max_per_source,
+                                       seen_titles, all_news, max_total)
+                    time.sleep(0.4)
+                except Exception as e:
+                    logger.debug(f"Scrapling stealth 政策 {src_name}: {e}")
+
+        else:
+            from scrapling.fetchers import Fetcher
+
+            for src_name, url_tpl, css_sel, lang in SCRAPLING_POLICY_SOURCES:
+                if len(all_news) >= max_total:
+                    break
+                try:
+                    url = url_tpl.format(code="", name="")
+                    page = Fetcher.get(url, timeout=20)
+                    _collect_from_page(page, css_sel, src_name, max_per_source,
+                                       seen_titles, all_news, max_total)
+                    time.sleep(0.4)
+                except Exception as e:
+                    logger.debug(f"Scrapling basic 政策 {src_name}: {e}")
+
+        if all_news:
+            logger.info(f"Scrapling 政策/宏观新闻: 获取到 {len(all_news)} 条")
+
+    except ImportError:
+        logger.info("scrapling 未安装，跳过 Scrapling 政策新闻")
+    except Exception as e:
+        logger.warning(f"Scrapling 政策新闻抓取失败: {e}")
+
+    return all_news[:max_total]
+
+
 def _collect_from_page(page, css_sel: str, src_name: str,
                         max_per_source: int, seen_titles: Set[str],
                         all_news: List[NewsResult], max_total: int) -> None:
-    """公共帮助函数：从页面 CSS 匹配结果中提取新闻并去重。"""
+    """从页面 CSS 匹配结果中提取新闻标题 + 摘要，去重后加入 all_news。"""
     titles = page.css(css_sel)
     for el in titles[:max_per_source]:
         if len(all_news) >= max_total:
@@ -239,13 +330,42 @@ def _collect_from_page(page, css_sel: str, src_name: str,
         if key in seen_titles:
             continue
         seen_titles.add(key)
+
+        snippet = _extract_sibling_snippet(el)
+
         all_news.append(NewsResult(
             title=text,
-            content="",
+            content=snippet,
             url="",
             source=src_name,
             pub_date=""
         ))
+
+
+def _extract_sibling_snippet(el, max_len: int = 150) -> str:
+    """从元素附近提取摘要文本"""
+    snippet_selectors = [
+        "p::text", ".desc::text", ".description::text",
+        ".summary::text", ".content::text", ".abstract::text",
+        "span.desc::text", "small::text",
+    ]
+    try:
+        page = getattr(el, 'parent', None)
+        if page is None:
+            return ""
+        for sel in snippet_selectors:
+            try:
+                items = page.css(sel)
+                if items:
+                    first = items[0]
+                    text = _el_text(first)
+                    if text and len(text) > 15 and text != _el_text(el):
+                        return text[:max_len]
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return ""
 
 
 def scrapling_stock_news_fallback(

@@ -462,11 +462,52 @@ def _search_market_news_list(days, max_results) -> List[NewsResult]:
 
 
 def _search_macro_news_list(days, max_results) -> List[NewsResult]:
+    """宏观/政策新闻采集（多源降级：Scrapling → AkShare → 空）"""
+    from .news_scrapling import scrapling_policy_news
+
+    news_list: List[NewsResult] = []
+    seen: set = set()
+
+    # 第一优先级：Scrapling 政策/宏观专用源
     try:
-        return search_akshare_macro_news(days, max_results)
+        for n in scrapling_policy_news(max_per_source=5, max_total=max_results + 5):
+            key = (n.title or "")[:60].lower()
+            if key not in seen:
+                seen.add(key)
+                news_list.append(n)
+        if news_list:
+            logger.info(f"宏观/政策新闻(Scrapling): {len(news_list)} 条")
+            return news_list[:max_results]
     except Exception as e:
-        logger.warning(f"宏观新闻搜索失败: {e}")
-        return []
+        logger.debug(f"Scrapling 政策新闻失败，降级 AkShare: {e}")
+
+    # 第二优先级：AkShare 宏观数据（M2/货币供应等）+ 市场财经新闻关键词过滤
+    try:
+        akshare_list = search_akshare_macro_news(days, max_results)
+        for n in akshare_list:
+            key = (n.title or "")[:60].lower()
+            if key not in seen:
+                seen.add(key)
+                news_list.append(n)
+
+        # 补充 AkShare 市场新闻中与宏观相关的条目
+        market_list = search_akshare_market_news(days, max_results)
+        policy_keywords = ['政策', '央行', '降息', '降准', 'MLF', 'LPR', '财政', '减税',
+                          '监管', '宏观', 'GDP', 'CPI', 'PMI', '利率', '通胀',
+                          '美联储', '关税', '贸易', '制裁', '地缘']
+        for n in market_list:
+            tl = (n.title or "").lower()
+            if any(kw.lower() in tl for kw in policy_keywords):
+                key = tl[:60]
+                if key not in seen:
+                    seen.add(key)
+                    news_list.append(n)
+    except Exception as e:
+        logger.debug(f"AkShare 宏观新闻补充失败: {e}")
+
+    if news_list:
+        logger.info(f"宏观/政策新闻(总): {len(news_list)} 条")
+    return news_list[:max_results]
 
 
 def _format_news_context(news_list: List[NewsResult], title: str) -> str:
