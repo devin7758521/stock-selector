@@ -110,9 +110,10 @@ TOP3_DEEP_SYSTEM_PROMPT = """你是A股资深投资分析师，拥有20年从业
 【硬性要求】
 1. 必须逐步推理，不能跳跃，每一步都要写出来
 2. 只使用提供的材料，不得编造任何数据、新闻或政策
-3. 信息不足的维度明确写"信息不足"，不要臆测
-4. 分析要具体，避免套话（如"建议关注"要说明关注什么）
-5. 语气专业、客观、冷静，不煽动情绪"""
+3. 【新闻正文】字段已包含完整新闻内容，请直接分析其中的具体事件，禁止回复"信息不足"或"未提供新闻内容"
+4. 【政策面】【宏观面】字段若为空才写"信息不足"，若有内容则必须分析
+5. 分析要具体，避免套话
+6. 语气专业、客观、冷静，不煽动情绪"""
 
 TOP3_DEEP_USER_PROMPT_TEMPLATE = """请对以下3只精选股票进行深度链式推理分析：
 
@@ -440,49 +441,88 @@ class LLMNewsAnalyzer:
             advice = r.get("llm_operation_advice", "N/A")
 
             lines = [
+                f"{'='*50}",
                 f"【{label}】{r.get('name', '?')}（{r.get('code', '?')}）",
                 f"评级：{star_icon}  |  加权分：{ws:.1f}  |  建议：{advice}",
                 "",
             ]
 
+            # ── 技术面（详细指标） ──
             tech = r.get("llm_technical_detail") or r.get("technical_analysis_detail") or ""
             if tech and tech != "N/A":
-                lines.append(f"技术面：{tech}")
+                lines.append(f"【技术面】{tech}")
+            # 补充原始技术分析数据
+            ta = r.get("technical_analysis", {})
+            if isinstance(ta, dict) and ta:
+                macd = ta.get("macd", {})
+                kdj = ta.get("kdj", {})
+                rsi_val = ta.get("rsi", "")
+                if macd or kdj:
+                    parts = []
+                    if macd:
+                        parts.append(f"MACD: value={macd.get('value','?')}, histogram={macd.get('histogram','?')}")
+                    if kdj:
+                        parts.append(f"KDJ: K={kdj.get('k','?')}, D={kdj.get('d','?')}, J={kdj.get('j','?')}")
+                    if rsi_val:
+                        parts.append(f"RSI: {rsi_val}")
+                    lines.append(f"  原始数据：{'；'.join(parts)}")
 
-            news_d = r.get("llm_news_detail") or r.get("news_analysis_detail") or ""
-            if news_d and news_d != "N/A":
-                lines.append(f"消息面：{news_d}")
+            # ── 新闻正文（关键！之前丢失了） ──
+            news_full = r.get("llm_news_summary") or ""
+            if news_full and len(news_full) > 20:
+                # 限制长度避免 token 爆炸，但保留足够上下文
+                news_trimmed = news_full[:2000]
+                lines.append(f"【新闻正文】{news_trimmed}")
+
+            # ── LLM 新闻分析结果 ──
+            llm_reason = r.get("llm_news_reason") or ""
+            if llm_reason:
+                lines.append(f"【LLM新闻推理】{llm_reason}")
 
             headlines = r.get("news_headlines", "")
             if headlines:
-                lines.append(f"新闻摘要：{headlines}")
+                lines.append(f"【关键事件】{headlines}")
 
-            policy_d = r.get("llm_policy_detail") or r.get("policy_analysis_detail") or ""
+            # ── 政策面 ──
             pi = r.get("policy_info", "")
-            if pi and pi not in ("信息不足", "", "N/A"):
-                policy_d = f"{policy_d}。{pi}" if policy_d else pi
-            if policy_d and policy_d != "N/A":
-                lines.append(f"政策面：{policy_d}")
+            if pi and pi not in ("信息不足", "", "N/A", "无", "政策面分析已由LLM完成"):
+                lines.append(f"【政策面】{pi}")
 
-            market_d = r.get("llm_market_detail") or r.get("market_environment_analysis") or ""
+            # ── 宏观面 ──
             mi = r.get("macro_info", "")
-            if mi and mi not in ("信息不足", "", "N/A"):
-                market_d = f"{market_d}。{mi}" if market_d else mi
+            if mi and mi not in ("信息不足", "", "N/A", "无"):
+                lines.append(f"【宏观面】{mi}")
+
+            # ── 市场环境 ──
+            market_d = r.get("llm_market_detail") or r.get("market_environment_analysis") or ""
             if market_d and market_d != "N/A":
-                lines.append(f"市场环境：{market_d}")
+                lines.append(f"【市场环境】{market_d}")
 
-            llm_reason = r.get("llm_news_reason", "")
-            if llm_reason:
-                lines.append(f"LLM新闻推理：{llm_reason}")
-
+            # ── AI 分析 ──
             ai_signal = r.get("ai_buy_signal", "")
             ai_score = r.get("ai_signal_score", 50)
+            ai_reason = r.get("ai_rating_reason", "")
             if ai_signal and ai_signal != "N/A":
-                lines.append(f"AI信号：{ai_signal}（评分{ai_score}）")
+                line = f"【AI信号】{ai_signal}（评分{ai_score}）"
+                if ai_reason and ai_reason != "N/A":
+                    line += f"  理由：{ai_reason}"
+                lines.append(line)
 
+            # ── 综合推理（Step 5.5 的 synthesis） ──
             rec = r.get("llm_recommendation_reason") or r.get("recommendation_reason", "")
             if rec:
-                lines.append(f"综合理由：{rec}")
+                lines.append(f"【综合推理(Step5.5)】{rec}")
+
+            # ── 量能/成交额 ──
+            vol_dev = r.get("vol_deviation_pct", None)
+            daily_amt = r.get("daily_amount_yi", None)
+            if vol_dev is not None or daily_amt is not None:
+                vol_parts = []
+                if vol_dev is not None:
+                    vol_parts.append(f"量能偏离：{vol_dev}%")
+                if daily_amt is not None:
+                    vol_parts.append(f"日成交额：{daily_amt}亿")
+                lines.append(f"【量能数据】{'；'.join(vol_parts)}")
 
             return "\n".join(lines)
 
@@ -525,7 +565,7 @@ class LLMNewsAnalyzer:
                         user_prompt=user_prompt,
                         api_key=pkey,
                         model=pmodel,
-                        max_tokens=4096,
+                        max_tokens=8192,
                         temperature=0.4,
                     )
                     if text and len(text) > 200:
@@ -533,7 +573,7 @@ class LLMNewsAnalyzer:
                         return text
                     results.append((pname, text))
                 else:
-                    text = self._synthesize_gemini(user_prompt, max_tokens=4096)
+                    text = self._synthesize_gemini(user_prompt, max_tokens=8192)
                     if text and len(text) > 200:
                         logger.info(f"Top3深度分析成功(provider=gemini_synth), {len(text)}字")
                         return text

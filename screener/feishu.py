@@ -352,7 +352,7 @@ def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Di
 
 def send_feishu_top3_analysis(analysis_text: str, cfg: dict) -> bool:
     """
-    发送 Top3 深度分析到飞书（富文本卡片）
+    发送 Top3 深度分析到飞书（text 消息，支持长文）
 
     Args:
         analysis_text: LLM 生成的深度分析全文
@@ -366,37 +366,25 @@ def send_feishu_top3_analysis(analysis_text: str, cfg: dict) -> bool:
         logger.warning("未配置飞书 webhook_url，跳过Top3深度分析推送")
         return False
 
-    # 飞书卡片单条消息有长度限制，超长则分段
-    FEISHU_MAX_PER_CARD = 5500
-
-    # 把分析文本按分段标题切割
-    sections = _split_analysis_into_sections(analysis_text, FEISHU_MAX_PER_CARD)
-
     today = datetime.today().strftime("%Y-%m-%d")
 
-    for idx, section_text in enumerate(sections):
-        section_label = f"（{idx+1}/{len(sections)}）" if len(sections) > 1 else ""
+    # text 消息上限 ~30K，但飞书实际展示友好上限约 8-10K
+    # 按 8000 字符分段，每段独立发送
+    chunk_size = 8000
+    chunks = []
+    for i in range(0, len(analysis_text), chunk_size):
+        chunks.append(analysis_text[i:i + chunk_size])
+
+    if not chunks:
+        return False
+
+    for idx, chunk in enumerate(chunks):
+        label = f"（{idx+1}/{len(chunks)}）" if len(chunks) > 1 else ""
+        content = f"🔬 Top3 深度推理分析 {today} {label}\n\n{chunk}"
 
         payload = {
-            "msg_type": "interactive",
-            "card": {
-                "header": {
-                    "title": {
-                        "tag": "plain_text",
-                        "content": f"🔬 Top3 深度推理分析 {today} {section_label}"
-                    },
-                    "template": "blue"
-                },
-                "elements": [
-                    {
-                        "tag": "div",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": section_text.replace("\n", "\n\n")
-                        }
-                    }
-                ]
-            }
+            "msg_type": "text",
+            "content": {"text": content}
         }
 
         try:
@@ -404,7 +392,7 @@ def send_feishu_top3_analysis(analysis_text: str, cfg: dict) -> bool:
             resp.raise_for_status()
             data = resp.json()
             if data.get("code") == 0 or data.get("StatusCode") == 0:
-                logger.info(f"Top3深度分析推送成功 {section_label}")
+                logger.info(f"Top3深度分析推送成功 {label}")
             else:
                 logger.error(f"Top3深度分析推送失败: {data}")
                 return False
