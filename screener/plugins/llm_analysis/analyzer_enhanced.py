@@ -75,8 +75,8 @@ class EnhancedLLMAnalyzer:
     星级：0～5 星；加权综合分（内部 0～100）低于 WEIGHTED_SCORE_ZERO_STAR_BELOW 为「无星」。
     """
 
-    # 新评分量纲 0~65，低于该加权分则为 0 星
-    WEIGHTED_SCORE_ZERO_STAR_BELOW: float = 20.0
+    # 评分量纲 0~100，低于该加权分则为 0 星
+    WEIGHTED_SCORE_ZERO_STAR_BELOW: float = 30.0
 
     def __init__(self, api_key: Optional[str] = None, model: str = "local", fallback_model: Optional[str] = None, deepseek_api_key: Optional[str] = None, sector_results: Optional[List] = None, gemini_api_key_2: Optional[str] = None, gemini_model_2: Optional[str] = None):
         """
@@ -234,10 +234,11 @@ class EnhancedLLMAnalyzer:
             # 打星理由包含各维度明细
             star_reason = (
                 f"综合{weighted_score:.1f}分 " +
-                f"| 技术共振{score_detail['tech_resonance']:.0f} " +
+                f"| 技术{score_detail['tech_resonance']:.0f} " +
                 f"| 量能{score_detail['volume_quality']:.0f} " +
                 f"| 板块{score_detail['sector_bonus']:.0f} " +
-                f"| LLM/AI融合{score_detail['combined_ai_llm']:.0f}" +
+                f"| LLM融合{score_detail['combined_ai_llm']:.0f} " +
+                f"| LLM直分{score_detail['llm_direct']:.0f}" +
                 ("" if score_detail['news_available'] else " (无新闻)")
             )
 
@@ -418,17 +419,23 @@ class EnhancedLLMAnalyzer:
         tech_score: int, stock_data: Dict[str, Any],
         news_context: Optional[str] = None) -> tuple:
         """
-        新评分公式（0~65 量纲）：
-        weighted_score = 技术共振×35% + 量能质量×25% + LLM/AI融合×20% + 板块联动×15% + 旧技术×5%
+        新评分公式（子维度归一化到 0~100，理论满分 ~97）：
+        weighted = 技术共振×22% + 量能质量×28% + LLM/AI融合×22%
+                 + LLM直接分×15% + 板块联动×8% + 旧技术分×5%
 
-        AI/LLM 冲突处理：分歧 >15 分取 max（不互相伤害），共振则加权平均
-        LLM 无新闻时：AI 独享融合分，不做惩罚
+        LLM直接分 = news×35% + policy×25% + macro×20% + market×20%
+        政策/宏观直达加权分，不再嵌套五层稀释。
         """
         tech_resonance = self._calculate_tech_resonance_score(
             indicators, technical_analysis, context
         )
         volume_quality = self._calculate_volume_quality_score(indicators)
         sector_bonus = self._calculate_sector_linkage_score(stock_data)
+
+        # 归一化到 0~100
+        tech_100 = tech_resonance * 100.0 / 60.0
+        volume_100 = volume_quality * 100.0 / 30.0
+        sector_100 = sector_bonus * 100.0 / 15.0
 
         # AI/LLM 融合
         ai_norm = ai_score / 100.0 * 60
@@ -437,26 +444,31 @@ class EnhancedLLMAnalyzer:
             combined_ai_llm = max(ai_norm, llm_norm)
         else:
             combined_ai_llm = ai_norm * 0.4 + llm_norm * 0.6
+        llm_ai_100 = combined_ai_llm * 100.0 / 60.0
 
-        # 新闻可用性检测（用 news_context 参数，而非还未赋值的 stock_data 字段）
+        # 新闻可用性
         news_available = bool(news_context and len(news_context.strip()) > 30)
         if not news_available:
-            combined_ai_llm = ai_norm   # 无新闻时 AI 独享，不惩罚
+            llm_ai_100 = ai_norm * 100.0 / 60.0
+
+        # LLM直接分：政策+宏观不再嵌套，直接进加权（LLM分已是0~100量纲）
+        llm_direct_100 = llm_score
 
         weighted = (
-            tech_resonance * 0.35 +
-            volume_quality * 0.25 +
-            combined_ai_llm * 0.20 +
-            sector_bonus * 0.15 +
-            tech_score * 0.05
+            tech_100 * 0.22 +      # 技术共振
+            volume_100 * 0.28 +    # 量能质量（量比+成交额+量价信号）
+            llm_ai_100 * 0.22 +    # LLM/AI 智能融合
+            llm_direct_100 * 0.15 + # LLM直接分（含政策25%+宏观20%）
+            sector_100 * 0.08 +    # 板块联动
+            tech_score * 0.05      # 旧技术分
         )
 
-        # 返回加权分 + 各维度明细
         detail = {
-            "tech_resonance": round(tech_resonance, 1),
-            "volume_quality": round(volume_quality, 1),
-            "sector_bonus": round(sector_bonus, 1),
-            "combined_ai_llm": round(combined_ai_llm, 1),
+            "tech_resonance": round(tech_100, 1),
+            "volume_quality": round(volume_100, 1),
+            "sector_bonus": round(sector_100, 1),
+            "combined_ai_llm": round(llm_ai_100, 1),
+            "llm_direct": round(llm_direct_100, 1),
             "news_available": news_available,
         }
         return max(0, min(100, weighted)), detail
@@ -487,27 +499,27 @@ class EnhancedLLMAnalyzer:
         return llm_score * 0.5 + ai_score * 0.3 + tech_score * 0.2
 
     def _generate_operation_advice(self, weighted_score: float) -> tuple:
-        """新评分量纲 0~65 的操作建议映射"""
-        if weighted_score >= 48:
+        """评分 0~100 的操作建议映射"""
+        if weighted_score >= 72:
             return "强烈买入", "高"
-        elif weighted_score >= 40:
+        elif weighted_score >= 62:
             return "买入", "中高"
-        elif weighted_score >= 32:
+        elif weighted_score >= 50:
             return "持有", "中"
-        elif weighted_score >= 25:
+        elif weighted_score >= 38:
             return "观望", "中低"
         else:
             return "卖出", "低"
 
     def _predict_trend(self, weighted_score: float, technical_score: int,
                       news_score: int, policy_score: int, macro_score: int) -> str:
-        if weighted_score >= 45:
+        if weighted_score >= 68:
             return "强势上涨"
-        elif weighted_score >= 38:
+        elif weighted_score >= 55:
             return "震荡上行"
-        elif weighted_score >= 30:
+        elif weighted_score >= 42:
             return "横盘震荡"
-        elif weighted_score >= 22:
+        elif weighted_score >= 30:
             return "震荡下行"
         else:
             return "弱势下跌"
@@ -529,11 +541,11 @@ class EnhancedLLMAnalyzer:
         return "；".join(parts)
 
     def _get_score_summary(self, weighted_score: float, operation_advice: str) -> str:
-        if weighted_score >= 48:
+        if weighted_score >= 72:
             return f"综合评分{weighted_score:.1f}分，多维度共振积极，建议{operation_advice}。"
-        elif weighted_score >= 36:
+        elif weighted_score >= 55:
             return f"综合评分{weighted_score:.1f}分，多维度分析偏多，建议{operation_advice}。"
-        elif weighted_score >= 28:
+        elif weighted_score >= 42:
             return f"综合评分{weighted_score:.1f}分，多维度分析中性偏空，建议{operation_advice}。"
         else:
             return f"综合评分{weighted_score:.1f}分，多维度信号偏弱，建议{operation_advice}。"
@@ -553,7 +565,7 @@ class EnhancedLLMAnalyzer:
 
     def _generate_buy_reason(self, weighted_score: float,
                             llm_news_reason: str, policy_info: str) -> str:
-        if weighted_score < 40:
+        if weighted_score < 62:
             return "当前不建议买入"
         reasons = []
         if llm_news_reason:
@@ -563,16 +575,16 @@ class EnhancedLLMAnalyzer:
         return "；".join(reasons) if reasons else "综合评分较高，可考虑买入"
 
     def _calculate_stars(self, weighted_score: float) -> int:
-        """新评分量纲 0~65 的星级映射"""
+        """评分 0~100 的星级映射"""
         if weighted_score < self.WEIGHTED_SCORE_ZERO_STAR_BELOW:
             return 0
-        if weighted_score >= 53:
+        if weighted_score >= 80:
             return 5
-        if weighted_score >= 45:
+        if weighted_score >= 68:
             return 4
-        if weighted_score >= 36:
+        if weighted_score >= 55:
             return 3
-        if weighted_score >= 28:
+        if weighted_score >= 42:
             return 2
         return 1
 
