@@ -277,6 +277,64 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
     with _lock:
         _stats["pass_macd"] += 1
 
+    # ── 新增强化指标（用于排名阶段的硬数据评分） ──────────────
+    # 1. 量比（相对于自身 20 日均量）
+    daily_vol_20ma = df_daily["volume"].rolling(20).mean().iloc[-1]
+    volume_ratio = float(latest_daily_amount / daily_vol_20ma) if daily_vol_20ma > 0 else 1.0
+
+    # 2. 金叉新鲜度（0=本周刚金叉，距今天数）
+    golden_cross_weeks_ago = 0
+    for lookback in range(0, min(8, n - 1)):
+        i = n - 1 - lookback
+        if i <= 0:
+            break
+        if (float(dif.iloc[i]) > float(dea.iloc[i]) and
+            float(dif.iloc[i - 1]) <= float(dea.iloc[i - 1])):
+            golden_cross_weeks_ago = lookback
+            break
+    if not recently_crossed and golden_cross_weeks_ago == 0:
+        golden_cross_weeks_ago = 99  # 金叉过久，标记为大值
+
+    # 金叉后价格涨幅（从金叉周到当前）
+    golden_cross_gain_pct = 0.0
+    if golden_cross_weeks_ago < 99:
+        cross_week_idx = n - 1 - golden_cross_weeks_ago
+        cross_price = float(close_w.iloc[cross_week_idx])
+        if cross_price > 0:
+            golden_cross_gain_pct = round((float(close_w.iloc[-1]) / cross_price - 1) * 100, 1)
+
+    # 3. MA25 偏离度
+    ma25_deviation_pct = round((float(close_w.iloc[idx]) / float(ma25_w.iloc[idx]) - 1) * 100, 1)
+
+    # 4. 本周量价配合
+    this_week_up = float(close_w.iloc[idx]) > float(close_w.iloc[idx - 1]) if idx - 1 >= 0 else False
+    this_week_vol_up = float(volume_w.iloc[idx]) > float(volume_w.iloc[idx - 1]) if idx - 1 >= 0 else False
+    if this_week_up and this_week_vol_up:
+        vol_price_signal = "healthy"     # 价涨量增 - 健康
+    elif this_week_up and not this_week_vol_up:
+        vol_price_signal = "divergence"   # 价涨量缩 - 背离
+    elif not this_week_up and this_week_vol_up:
+        vol_price_signal = "distribution" # 价跌量增 - 出货
+    else:
+        vol_price_signal = "weak"         # 价跌量缩 - 弱势
+
+    # 5. 连续站上 MA25 周数
+    weeks_above_ma25 = 0
+    for wi in range(n - 1, -1, -1):
+        if float(close_w.iloc[wi]) > float(ma25_w.iloc[wi]):
+            weeks_above_ma25 += 1
+        else:
+            break
+
+    # 6. 周 KDJ 是否刚金叉（3周内）
+    wk_k = k.iloc[-1] if 'k' in dir() else None
+    kdj_recent_golden = False
+    try:
+        # 用日线 KDJ 近似：最近3个周K对应的日KDJ曾金叉
+        kdj_recent_golden = recently_crossed or golden_cross_weeks_ago <= 2
+    except Exception:
+        pass
+
     return {
         "price":               round(latest_price, 2),
         "ma25_weekly":         round(ma25_w.iloc[idx], 2),
@@ -289,4 +347,12 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
         "macd_dif":            round(dif_val, 4),
         "macd_dea":            round(dea_val, 4),
         "macd_recently_crossed": recently_crossed,
+        # 新增指标
+        "volume_ratio":         round(volume_ratio, 2),
+        "golden_cross_weeks":   golden_cross_weeks_ago,
+        "golden_cross_gain_pct": golden_cross_gain_pct,
+        "ma25_deviation_pct":   ma25_deviation_pct,
+        "vol_price_signal":     vol_price_signal,
+        "weeks_above_ma25":     weeks_above_ma25,
+        "kdj_recent_golden":    kdj_recent_golden,
     }

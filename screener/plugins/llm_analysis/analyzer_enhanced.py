@@ -47,6 +47,8 @@ class AnalysisResult:
     ai_weight: float = 0.3
     technical_weight: float = 0.2
 
+    score_detail: Optional[Dict[str, Any]] = None
+
     error_message: Optional[str] = None
 
     news_headlines: str = ""
@@ -119,7 +121,8 @@ class EnhancedLLMAnalyzer:
 
     def analyze(self, context: Dict[str, Any], news_context: Optional[str],
                 ai_analysis: Optional[Dict] = None,
-                technical_analysis: Optional[Dict] = None) -> AnalysisResult:
+                technical_analysis: Optional[Dict] = None,
+                stock_data: Optional[Dict] = None) -> AnalysisResult:
         """
         综合分析股票数据
 
@@ -193,8 +196,16 @@ class EnhancedLLMAnalyzer:
             ai_score = self._extract_ai_score(ai_analysis)
             tech_score = technical_analyzer.extract_score(technical_analysis)
 
-            weighted_score = self._calculate_weighted_score(
-                llm_base_score, ai_score, tech_score
+            # 新评分体系：硬数据 + LLM 融合
+            indicators = (stock_data or {}).copy()
+            weighted_score, score_detail = self._calculate_enhanced_weighted_score(
+                indicators=indicators,
+                technical_analysis=technical_analysis,
+                context=context,
+                llm_score=llm_base_score,
+                ai_score=ai_score,
+                tech_score=tech_score,
+                stock_data=(stock_data or {}),
             )
 
             operation_advice, confidence_level = self._generate_operation_advice(weighted_score)
@@ -219,7 +230,15 @@ class EnhancedLLMAnalyzer:
 
             stars = self._calculate_stars(weighted_score)
 
-            star_reason = f"综合评分{weighted_score:.1f}分 ({stars}星)"
+            # 打星理由包含各维度明细
+            star_reason = (
+                f"综合{weighted_score:.1f}分 " +
+                f"| 技术共振{score_detail['tech_resonance']:.0f} " +
+                f"| 量能{score_detail['volume_quality']:.0f} " +
+                f"| 板块{score_detail['sector_bonus']:.0f} " +
+                f"| LLM/AI融合{score_detail['combined_ai_llm']:.0f}" +
+                ("" if score_detail['news_available'] else " (无新闻)")
+            )
 
             analysis_summary = self._generate_summary(
                 stock_name, code, weighted_score, operation_advice,
@@ -248,6 +267,7 @@ class EnhancedLLMAnalyzer:
                 llm_weight=0.5,
                 ai_weight=0.3,
                 technical_weight=0.2,
+                score_detail=score_detail,
                 news_headlines=news_headlines,
                 policy_info=policy_info,
                 macro_info=macro_info,
@@ -258,37 +278,204 @@ class EnhancedLLMAnalyzer:
             logger.error(f"分析失败: {e}", exc_info=True)
             return self._create_error_result(str(e))
 
+    # ── 新评分体系：硬数据主导（70%）+ LLM 做加法（20%）+ 板块联动（10%） ──
+
+    def _calculate_tech_resonance_score(self, indicators: Dict[str, Any],
+                                        technical_analysis: Optional[Dict],
+                                        context: Dict[str, Any]) -> float:
+        """技术共振评分（0~60，替代原来 50~70 的窄技术分）"""
+        score = 0.0
+
+        # 1. 金叉新鲜度 (0~20)
+        gc_weeks = indicators.get("golden_cross_weeks", 99)
+        if gc_weeks == 0:
+            score += 20  # 本周刚金叉
+        elif gc_weeks == 1:
+            score += 16
+        elif gc_weeks == 2:
+            score += 12
+        elif gc_weeks == 3:
+            score += 8
+        elif gc_weeks <= 5:
+            score += 4
+        # >5 周不加分
+
+        # 金叉后涨幅惩罚（涨幅过大减分）
+        gc_gain = indicators.get("golden_cross_gain_pct", 0)
+        if gc_weeks <= 5 and gc_gain > 15:
+            score -= 5   # 金叉后涨幅过大，追高扣分
+
+        # 2. RSI 位置 (0~12)
+        rsi = 50
+        if isinstance(technical_analysis, dict):
+            rsi = float(technical_analysis.get("rsi", 50))
+        if 55 <= rsi <= 72:
+            score += 12  # 强势非超买
+        elif 45 <= rsi < 55:
+            score += 6
+        elif 72 < rsi <= 80:
+            score += 3   # 偏强但接近超买
+        # rsi < 45 或 > 80 不加分
+
+        # 3. MA25 偏离度 (0~12)
+        ma25_dev = indicators.get("ma25_deviation_pct", 0)
+        if 3 <= ma25_dev <= 10:
+            score += 12  # 最佳攻击区
+        elif 0 < ma25_dev < 3:
+            score += 8
+        elif 10 < ma25_dev <= 20:
+            score += 4
+        elif ma25_dev > 20:
+            score -= 3   # 过度延伸
+
+        # 4. KDJ/均线共振 (0~10)
+        kdj_golden = indicators.get("kdj_recent_golden", False)
+        weeks_above = indicators.get("weeks_above_ma25", 0)
+        if kdj_golden and weeks_above >= 3:
+            score += 10  # KDJ金叉 + 连续站上MA25
+        elif kdj_golden:
+            score += 6
+        elif weeks_above >= 5:
+            score += 3   # 趋势稳固但无金叉
+
+        # 5. MACD 金叉质量 (0~6)
+        if indicators.get("macd_recently_crossed"):
+            score += 6
+
+        return max(0, min(60, score))
+
+    def _calculate_volume_quality_score(self, indicators: Dict[str, Any]) -> float:
+        """量能质量评分（0~30），取代表绝对阈值"""
+        score = 0.0
+
+        # 1. 量比 (0~12)
+        vol_ratio = indicators.get("volume_ratio", 1.0)
+        if 1.5 <= vol_ratio <= 2.5:
+            score += 12  # 温和放量最佳
+        elif 1.2 <= vol_ratio < 1.5:
+            score += 8
+        elif 1.0 <= vol_ratio < 1.2:
+            score += 4
+        elif vol_ratio > 2.5:
+            score += 2   # 爆量，可能有对倒
+
+        # 2. 日成交额活跃度 (0~8)，相对打分不设绝对值
+        daily_amt = indicators.get("daily_amount_yi", 0)
+        if daily_amt >= 20:
+            score += 8   # 大资金关注
+        elif daily_amt >= 10:
+            score += 6
+        elif daily_amt >= 5:
+            score += 3
+        # < 5 亿不扣分但也不加分（过滤阶段已保证 >=5亿）
+
+        # 3. 量价配合 (0~10)
+        vp_signal = indicators.get("vol_price_signal", "")
+        if vp_signal == "healthy":
+            score += 10  # 价涨量增
+        elif vp_signal == "divergence":
+            score += 2   # 价涨量缩 - 背离信号
+        elif vp_signal == "distribution":
+            score -= 5   # 价跌量增 - 减分！
+        # weak 不加分
+
+        return max(0, min(30, score))
+
+    def _calculate_sector_linkage_score(self, stock_data: Dict[str, Any]) -> float:
+        """板块联动加分（0~15），来源于 sector_results 注入"""
+        score = 0.0
+        sector_hint = stock_data.get("llm_market_detail", "") or \
+                       stock_data.get("market_environment_analysis", "") or ""
+        if not sector_hint:
+            return 0.0
+
+        # 从 LLM 市场环境分析文本中匹配板块排名
+        import re
+        rank_match = re.search(r'今日涨幅第(\d+)', sector_hint)
+        if rank_match:
+            rank = int(rank_match.group(1))
+            if rank == 1:
+                score += 12
+            elif rank == 2:
+                score += 8
+            elif rank == 3:
+                score += 5
+            elif rank <= 5:
+                score += 3
+
+        # 板块联动强度关键词
+        if '极强' in sector_hint:
+            score += 3
+        elif '强' in sector_hint and '不强' not in sector_hint:
+            score += 1
+
+        return max(0, min(15, score))
+
+    def _calculate_enhanced_weighted_score(
+        self, indicators: Dict[str, Any], technical_analysis: Optional[Dict],
+        context: Dict[str, Any], llm_score: float, ai_score: int,
+        tech_score: int, stock_data: Dict[str, Any]) -> tuple:
+        """
+        新评分公式：
+        weighted_score = 技术共振×35% + 量能质量×25% + LLM综合×20% + 板块联动×10% + AI确认×10%
+
+        AI/LLM 冲突处理：AI 和 LLM 取 max（不互相伤害）
+        LLM 无新闻时默认不加分不扣分
+        """
+        tech_resonance = self._calculate_tech_resonance_score(
+            indicators, technical_analysis, context
+        )
+        volume_quality = self._calculate_volume_quality_score(indicators)
+        sector_bonus = self._calculate_sector_linkage_score(stock_data)
+
+        # AI/LLM 融合：取强者为主，弱者补充
+        ai_norm = ai_score / 100.0 * 60   # 归一化到 0~60
+        llm_norm = llm_score / 100.0 * 60  # 归一化到 0~60
+        if abs(ai_norm - llm_norm) > 15:
+            # 分歧大 → 取 max，只信强者
+            combined_ai_llm = max(ai_norm, llm_norm)
+        else:
+            # 共振 → 加权平均
+            combined_ai_llm = ai_norm * 0.4 + llm_norm * 0.6
+
+        # 无新闻时 LLM 减权
+        news_available = bool(stock_data.get("llm_news_summary") or
+                            stock_data.get("news_headlines"))
+        if not news_available:
+            combined_ai_llm = max(combined_ai_llm * 0.5, ai_norm * 0.8)
+
+        weighted = (
+            tech_resonance * 0.35 +
+            volume_quality * 0.25 +
+            combined_ai_llm * 0.20 +
+            sector_bonus * 0.15 +
+            tech_score * 0.05  # 传统技术分作为小权重补充
+        )
+
+        # 返回加权分 + 各维度明细
+        detail = {
+            "tech_resonance": round(tech_resonance, 1),
+            "volume_quality": round(volume_quality, 1),
+            "sector_bonus": round(sector_bonus, 1),
+            "combined_ai_llm": round(combined_ai_llm, 1),
+            "news_available": news_available,
+        }
+        return max(0, min(100, weighted)), detail
+
+    # 保留旧接口兼容
     def _calculate_llm_score(self, news_score: Optional[int],
                             policy_score: Optional[int],
                             macro_score: Optional[int],
                             market_score: Optional[int]) -> float:
-        weights = {
-            "news": 0.40,
-            "policy": 0.20,
-            "macro": 0.15,
-            "market": 0.25,
-        }
-        scores = {
-            "news": news_score,
-            "policy": policy_score,
-            "macro": macro_score,
-            "market": market_score,
-        }
+        weights = {"news": 0.40, "policy": 0.20, "macro": 0.15, "market": 0.25}
+        scores = {"news": news_score, "policy": policy_score, "macro": macro_score, "market": market_score}
         available = {k: v for k, v in scores.items() if v is not None}
-
         if not available:
             return 50.0
-
         if len(available) < len(scores):
             total_weight = sum(weights[k] for k in available)
             return sum(available[k] * (weights[k] / total_weight) for k in available)
-
-        return (
-            news_score * 0.40 +
-            policy_score * 0.20 +
-            macro_score * 0.15 +
-            market_score * 0.25
-        )
+        return news_score * 0.40 + policy_score * 0.20 + macro_score * 0.15 + market_score * 0.25
 
     def _extract_ai_score(self, ai_analysis: Optional[Dict]) -> int:
         if ai_analysis:
@@ -297,7 +484,7 @@ class EnhancedLLMAnalyzer:
 
     def _calculate_weighted_score(self, llm_score: float, ai_score: int,
                                  tech_score: int) -> float:
-        """计算加权总分：LLM 50% + AI 30% + 技术指标 20%"""
+        """旧加权分（保留兼容）"""
         return llm_score * 0.5 + ai_score * 0.3 + tech_score * 0.2
 
     def _generate_operation_advice(self, weighted_score: float) -> tuple:
@@ -486,6 +673,7 @@ class EnhancedLLMAnalyzer:
             success=False,
             stars=0,
             star_reason="分析异常，跳过评级",
+            score_detail=None,
             error_message=error_message
         )
 

@@ -516,13 +516,47 @@ class LLMNewsAnalyzer:
             # ── 量能/成交额 ──
             vol_dev = r.get("vol_deviation_pct", None)
             daily_amt = r.get("daily_amount_yi", None)
+            vol_ratio = r.get("volume_ratio", None)
+            vp_signal = r.get("vol_price_signal", "")
             if vol_dev is not None or daily_amt is not None:
                 vol_parts = []
                 if vol_dev is not None:
                     vol_parts.append(f"量能偏离：{vol_dev}%")
                 if daily_amt is not None:
                     vol_parts.append(f"日成交额：{daily_amt}亿")
+                if vol_ratio is not None:
+                    vol_parts.append(f"量比：{vol_ratio}x")
+                if vp_signal:
+                    vp_map = {"healthy": "价涨量增(健康)", "divergence": "价涨量缩(背离)",
+                              "distribution": "价跌量增(出货)", "weak": "价跌量缩(弱势)"}
+                    vol_parts.append(f"量价信号：{vp_map.get(vp_signal, vp_signal)}")
                 lines.append(f"【量能数据】{'；'.join(vol_parts)}")
+
+            # ── 新增：技术共振指标 ──
+            gc_weeks = r.get("golden_cross_weeks")
+            gc_gain = r.get("golden_cross_gain_pct")
+            ma25_dev = r.get("ma25_deviation_pct")
+            weeks_above = r.get("weeks_above_ma25")
+            if any(v is not None for v in [gc_weeks, gc_gain, ma25_dev, weeks_above]):
+                tech_parts = []
+                if gc_weeks is not None:
+                    tech_parts.append(f"金叉后{gc_weeks}周" if gc_weeks < 99 else "金叉已久")
+                if gc_gain is not None:
+                    tech_parts.append(f"金叉后涨幅{gc_gain}%")
+                if ma25_dev is not None:
+                    tech_parts.append(f"MA25偏离{ma25_dev}%")
+                if weeks_above is not None:
+                    tech_parts.append(f"连续站上MA25共{weeks_above}周")
+                lines.append(f"【技术共振】{'；'.join(tech_parts)}")
+
+            # ── 新评分维度明细 ──
+            sd = r.get("score_detail") or {}
+            if sd:
+                lines.append(f"【评分明细】技术共振{sd.get('tech_resonance', 0):.0f} " +
+                           f"| 量能{sd.get('volume_quality', 0):.0f} " +
+                           f"| 板块{sd.get('sector_bonus', 0):.0f} " +
+                           f"| LLM/AI融合{sd.get('combined_ai_llm', 0):.0f}" +
+                           ("" if sd.get('news_available') else " (无新闻)"))
 
             return "\n".join(lines)
 

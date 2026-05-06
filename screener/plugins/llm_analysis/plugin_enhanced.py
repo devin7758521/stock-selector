@@ -176,12 +176,13 @@ class LLMAnalysisPlugin(Plugin):
                 if _ta_patch and _ta_patch.get("technical_analysis"):
                     technical_analysis = _ta_patch["technical_analysis"]
 
-            # 执行增强版LLM分析
+            # 执行增强版LLM分析（传入 stock_data 供硬数据评分使用）
             result = self.analyzer.analyze(
                 context=context,
                 news_context=news_context,
                 ai_analysis=ai_analysis,
-                technical_analysis=technical_analysis
+                technical_analysis=technical_analysis,
+                stock_data=stock_data,
             )
             
             news_success = bool(news_context)
@@ -216,7 +217,8 @@ class LLMAnalysisPlugin(Plugin):
                 "llm_weighted_score": result.weighted_score,
                 "llm_weight": result.llm_weight,
                 "ai_weight": result.ai_weight,
-                "technical_weight": result.technical_weight
+                "technical_weight": result.technical_weight,
+                "score_detail": result.score_detail,
             }
         except Exception as e:
             logger.error(f"LLM 分析失败: {e}", exc_info=True)
@@ -268,12 +270,25 @@ class LLMAnalysisPlugin(Plugin):
         output_parts.append(f"建议={operation_advice}")
         output_parts.append(f"置信度={confidence}")
         output_parts.append(f"加权分={weighted_score:.1f}")
-        
+
+        # 新评分维度明细
+        sd = stock_data.get("score_detail") or {}
+        if sd:
+            parts = []
+            if sd.get("tech_resonance"):
+                parts.append(f"技术共振{sd['tech_resonance']:.0f}")
+            if sd.get("volume_quality"):
+                parts.append(f"量能{sd['volume_quality']:.0f}")
+            if sd.get("sector_bonus"):
+                parts.append(f"板块{sd['sector_bonus']:.0f}")
+            if parts:
+                output_parts.append(f"硬数据={' + '.join(parts)}")
+
         # 打星理由
         star_reason = stock_data.get('llm_star_reason', '')
         if star_reason:
             output_parts.append(f"理由={star_reason}")
-        
+
         return "  ".join(output_parts)
     
     def format_detailed_output(self, stock_data: Dict[str, Any]) -> str:
