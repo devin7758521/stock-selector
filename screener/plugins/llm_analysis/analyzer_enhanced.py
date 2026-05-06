@@ -455,8 +455,8 @@ class EnhancedLLMAnalyzer:
         llm_direct_100 = llm_score
 
         weighted = (
-            tech_100 * 0.22 +      # 技术共振
-            volume_100 * 0.28 +    # 量能质量（量比+成交额+量价信号）
+            tech_100 * 0.18 +      # 技术共振
+            volume_100 * 0.32 +    # 量能质量（量比+成交额+量价信号，真金白银）
             llm_ai_100 * 0.22 +    # LLM/AI 智能融合
             llm_direct_100 * 0.15 + # LLM直接分（含政策25%+宏观20%）
             sector_100 * 0.08 +    # 板块联动
