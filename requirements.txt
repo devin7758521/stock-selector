@@ -15,4 +15,6 @@ tenacity
 beautifulsoup4
 tavily-python
 scrapling[fetchers]
+adata
+pywencai
 

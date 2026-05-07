@@ -92,3 +92,33 @@ jobs:
           SCRAPLING_MODE:     basic
         run: |
           python main.py
+
+  strategy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run strategy guide
+        env:
+          TZ: Asia/Shanghai
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: |
+          python run_strategy.py
+
+      - name: Upload strategy results
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-results
+          path: strategy_results.json
+          retention-days: 1
