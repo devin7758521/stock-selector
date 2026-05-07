@@ -138,46 +138,11 @@ def aggregate_limit_up_by_sector(limit_up_list: List[Dict]) -> Dict[str, int]:
 
 
 # ═══════════════════════════════════════════════════════
-# 2. 板块详情（adata → 东方财富 双通道）
+# 2. 板块详情（东方财富 + adata 概念板块）
 # ═══════════════════════════════════════════════════════
 
-def _sector_detail_adata() -> Optional[List[Dict]]:
-    """主源: adata 同花顺概念板块行情（多源融合）"""
-    try:
-        import adata
-        df = adata.stock.market.get_market_concept_ths()
-        if df is not None and not df.empty:
-            rows = []
-            for _, r in df.iterrows():
-                name = str(r.get("板块名称", r.get("name", "")))
-                if not name:
-                    continue
-                gain = 0.0
-                for k in ["涨跌幅", "涨幅", "gain", "pct_change"]:
-                    if k in r:
-                        gain = _safe_float(r[k])
-                        break
-                amt = 0.0
-                for k in ["成交额", "amount", "total_amount"]:
-                    if k in r:
-                        amt = _safe_float(r[k]) / 1e8
-                        break
-                rows.append({
-                    "name": name,
-                    "gain_pct": round(gain, 2),
-                    "amount_yi": round(amt, 2),
-                    "up_count": 0,
-                })
-            if rows:
-                logger.info(f"[板块详情] adata 同花顺: {len(rows)} 个板块")
-                return rows
-    except Exception as e:
-        logger.debug(f"adata板块详情失败: {e}")
-    return None
-
-
 def _sector_detail_eastmoney() -> List[Dict]:
-    """备源: 东方财富行业板块HTTP"""
+    """东方财富行业板块HTTP（主源，aks与limit-up同源）"""
     rows = []
     try:
         url = "https://push2.eastmoney.com/api/qt/clist/get"
@@ -209,35 +174,30 @@ def _sector_detail_eastmoney() -> List[Dict]:
     return rows
 
 
-def _fetch_sector_details() -> List[Dict]:
-    """板块详情: adata(同花顺) → 东方财富"""
-    rows = _sector_detail_adata()
-    if rows:
-        return rows
-    logger.info("[板块详情] adata失败 → 降级东方财富")
-    return _sector_detail_eastmoney()
-
-
 # ═══════════════════════════════════════════════════════
 # 3. 主线板块识别
 # ═══════════════════════════════════════════════════════
 
+def _fuzzy_match_sector(zt_name: str, em_names: List[str]) -> Optional[str]:
+    """模糊匹配 akshare涨停板板块名 → 东方财富板块名"""
+    from difflib import SequenceMatcher
+    best_score, best_name = 0, None
+    zt_clean = zt_name.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    for em in em_names:
+        em_clean = em.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+        # 子串匹配优先
+        if zt_clean in em_clean or em_clean in zt_clean:
+            return em
+        score = SequenceMatcher(None, zt_clean, em_clean).ratio()
+        if score > best_score:
+            best_score, best_name = score, em
+    return best_name if best_score >= 0.60 else None
+
+
 def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
     """综合涨停数(40%)+成交额(35%)+涨幅(25%) 识别主线板块"""
     limit_up_list = fetch_limit_up_board()
-    sector_zt = aggregate_limit_up_by_sector(limit_up_list)
-    sector_details = _fetch_sector_details()
-
-    # 补偿: 把涨停数多的板块名映射到 sector_details 的 name
-    # 同花顺概念名称 vs 东方财富行业名称 可能不一致，取交集
-    if sector_zt:
-        detail_names = {s["name"] for s in sector_details}
-        for zt_name, zt_count in sector_zt.items():
-            if zt_name not in detail_names and zt_count >= 3:
-                sector_details.append({
-                    "name": zt_name, "code": "",
-                    "gain_pct": 0, "amount_yi": 0, "up_count": 0,
-                })
+    sector_details = _sector_detail_eastmoney()
 
     if not sector_details:
         logger.warning("无法获取板块详情，仅用涨幅排名")
@@ -250,6 +210,32 @@ def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
              "leader_stocks": []}
             for i, s in enumerate(top_sectors)
         ]
+
+    em_names = [s["name"] for s in sector_details]
+    em_code_map = {s["name"]: s["code"] for s in sector_details}
+
+    # 把 akshare 涨停板块名 → 映射到东方财富板块名（模糊匹配）
+    raw_sector_zt: Dict[str, int] = {}
+    for stock in limit_up_list:
+        s = stock.get("sector", "").strip()
+        if not s or s in ("无", "其它", "null"):
+            continue
+        matched = _fuzzy_match_sector(s, em_names)
+        target = matched if matched else s  # 匹配不到保留原名（至少能展示）
+        raw_sector_zt[target] = raw_sector_zt.get(target, 0) + 1
+
+    # 涨停数按东方财富板块名统计
+    sector_zt: Dict[str, int] = {}
+    for s in sector_details:
+        name = s["name"]
+        count = raw_sector_zt.get(name, 0)
+        # 也累加模糊匹配后落到该板块的计数（matched_name == name）
+        if count > 0:
+            sector_zt[name] = count
+
+    logger.info(
+        f"[板块映射] {len(raw_sector_zt)} 个涨停板块 → {len(sector_zt)} 个匹配到东方财富板块"
+    )
 
     # 归一化 + 加权
     zt_vals = [sector_zt.get(s["name"], 0) for s in sector_details]
@@ -266,13 +252,16 @@ def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
         amt = s["amount_yi"]
         gain = s["gain_pct"]
         score = (zt / max_zt * 40) + (amt / max_amt * 35) + (gain / max_gain * 25)
-        scored.append({
-            "name": s["name"], "code": s.get("code", ""),
-            "score": round(score, 1),
-            "limit_up_count": zt,
-            "gain_pct": round(gain, 2),
-            "amount_yi": round(amt, 2),
-        })
+        code = em_code_map.get(s["name"], "")
+        # 没有匹配到东方财富板块code的不纳入（无法取成分股）
+        if code:
+            scored.append({
+                "name": s["name"], "code": code,
+                "score": round(score, 1),
+                "limit_up_count": zt,
+                "gain_pct": round(gain, 2),
+                "amount_yi": round(amt, 2),
+            })
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     for i, s in enumerate(scored[:top_n]):
