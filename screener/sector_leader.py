@@ -207,14 +207,44 @@ def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
     if not sector_details:
         logger.warning("无法获取板块详情，仅用涨幅排名")
         top_sectors = fetch_top_sectors_by_gain(top_n)
-        return [
-            {"rank": i + 1, "name": s["name"], "code": s.get("code", ""),
-             "score": 0, "limit_up_count": 0,
-             "gain_pct": s.get("gain_pct", 0),
-             "amount_yi": s.get("amount_yi", 0),
-             "leader_stocks": []}
-            for i, s in enumerate(top_sectors)
-        ]
+        if top_sectors:
+            return [
+                {"rank": i + 1, "name": s["name"], "code": s.get("code", ""),
+                 "score": 0, "limit_up_count": 0,
+                 "gain_pct": s.get("gain_pct", 0),
+                 "amount_yi": s.get("amount_yi", 0),
+                 "leader_stocks": []}
+                for i, s in enumerate(top_sectors)
+            ]
+
+        # 最后兜底：涨停板数据聚合（akshare 在 GitHub Actions 上可用，
+        # 涨停股自带所属行业，按涨停数降序取 top_n 作为主线板块）
+        logger.warning("涨幅排名也失败，改用涨停板数据聚合识别板块")
+        zt_sectors: Dict[str, Dict] = {}
+        for stock in limit_up_list:
+            s = stock.get("sector", "").strip()
+            if not s or s in ("无", "其它", "null"):
+                continue
+            if s not in zt_sectors:
+                zt_sectors[s] = {"name": s, "code": "", "count": 0, "stocks": []}
+            zt_sectors[s]["count"] += 1
+            zt_sectors[s]["stocks"].append(stock)
+
+        sorted_sectors = sorted(zt_sectors.values(), key=lambda x: -x["count"])
+        top_zt = sorted_sectors[:top_n]
+        if top_zt:
+            logger.info(f"[涨停聚合] 主线板块: " + " | ".join(f"{s['name']}({s['count']}涨停)" for s in top_zt))
+            return [
+                {"rank": i + 1, "name": s["name"], "code": "",
+                 "score": round(s["count"] * 10, 1),
+                 "limit_up_count": s["count"],
+                 "gain_pct": 0, "amount_yi": 0,
+                 "leader_stocks": []}
+                for i, s in enumerate(top_zt)
+            ]
+
+        logger.warning("所有数据源均无法识别板块")
+        return []
 
     em_names = [s["name"] for s in sector_details]
 
@@ -533,8 +563,25 @@ def _check_ma_position(df: pd.DataFrame) -> Dict:
 def pick_leader_stocks(sector_name: str, sector_code: str, top_n: int = 3) -> List[Dict]:
     """
     板块内选龙头股：按成交额排序 → K线均线检查 → 三档信号
+
+    当 sector_code 为空时（涨停聚合降级），用涨停板中该板块的股票作为候选池。
     """
-    stocks = _fetch_sector_stocks_eastmoney(sector_code)
+    stocks = _fetch_sector_stocks_eastmoney(sector_code) if sector_code else []
+    if not stocks and not sector_code:
+        # 降级：涨停板中取该板块的股票
+        try:
+            limit_up_list = fetch_limit_up_board()
+            stocks = [
+                {"code": s["code"], "name": s["name"],
+                 "price": 0, "gain_pct": 0, "amount_yi": 0,
+                 "turnover_pct": 0, "volume_ratio": 1.0}
+                for s in limit_up_list
+                if s.get("sector", "").strip() == sector_name
+            ]
+            if stocks:
+                logger.info(f"[龙头选股] {sector_name}: 涨停聚合 {len(stocks)} 只候选")
+        except Exception as e:
+            logger.debug(f"[龙头选股] {sector_name} 涨停聚合失败: {e}")
     if not stocks:
         logger.warning(f"[龙头选股] {sector_name} 无成分股数据")
         return []
