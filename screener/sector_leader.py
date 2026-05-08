@@ -375,7 +375,7 @@ def _fetch_stock_kline_eastmoney(code: str, days: int = 30) -> Optional[pd.DataF
         url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
         params = {
             "secid": secid,
-            "ut": "fa5fd1943c7b386f172d6893dbfd10b4",
+            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
             "fields1": "f1,f2,f3,f4,f5,f6",
             "fields2": "f51,f52,f53,f54,f55,f56,f57",
             "klt": "101", "fqt": "1",
@@ -398,12 +398,98 @@ def _fetch_stock_kline_eastmoney(code: str, days: int = 30) -> Optional[pd.DataF
 
 
 def _fetch_stock_kline(code: str, days: int = 30) -> Optional[pd.DataFrame]:
-    """个股日K: adata → 东方财富 双通道"""
+    """个股日K: adata → 东方财富（修正ut） → datasources 多源降级"""
     df = _fetch_stock_kline_adata(code, days)
     if df is not None:
         return df
     logger.debug(f"adata K线 {code} 失败 → 降级东方财富")
-    return _fetch_stock_kline_eastmoney(code, days)
+    df = _fetch_stock_kline_eastmoney(code, days)
+    if df is not None:
+        return df
+    # 最后兜底：复用 datasources 的各数据源，但跳过 _to_df 的200行限制
+    logger.debug(f"东方财富K线 {code} 失败 → 降级 datasources 兜底")
+    for name, fn in (
+        ("tencent", lambda: _fetch_source_tencent(code)),
+        ("sina", lambda: _fetch_source_sina(code)),
+        ("baostock", lambda: _fetch_source_baostock(code)),
+    ):
+        try:
+            dff = fn()
+            if dff is not None and len(dff) >= days:
+                return dff
+        except Exception as e:
+            logger.debug(f"  {name} K线 {code} 失败: {e}")
+    return None
+
+
+def _fetch_source_tencent(code: str) -> Optional[pd.DataFrame]:
+    """腾讯财经K线（约60天数据，无200行限制）"""
+    try:
+        import requests, json
+        prefix = "sh" if code.startswith("6") else "sz"
+        key = f"{prefix}{code}"
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=kline_dayqfq&param={key},day,,,640,qfq"
+        resp = requests.get(url, headers=random_headers(), timeout=10)
+        resp.raise_for_status()
+        text = resp.text.strip()
+        text = text[text.index("{"):]
+        days = json.loads(text).get("data", {}).get(key, {}).get("qfqday", [])
+        if not days:
+            return None
+        rows = [{"date": d[0], "close": float(d[2]), "volume": float(d[5]) * 100} for d in days]
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        return df.sort_values("date").reset_index(drop=True)
+    except Exception:
+        return None
+
+
+def _fetch_source_sina(code: str) -> Optional[pd.DataFrame]:
+    """新浪财经K线兜底"""
+    try:
+        import requests, json
+        prefix = "sh" if code.startswith("6") else "sz"
+        url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData"
+        params = {"symbol": f"{prefix}{code}", "scale": 240, "ma": "no", "datalen": 60}
+        resp = requests.get(url, params=params, headers=random_headers(), timeout=10)
+        resp.raise_for_status()
+        raw = json.loads(resp.text)
+        if not raw:
+            return None
+        rows = [{"date": r["day"], "close": float(r["close"]), "volume": float(r.get("volume", 0))} for r in raw]
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"])
+        return df.sort_values("date").reset_index(drop=True)
+    except Exception:
+        return None
+
+
+def _fetch_source_baostock(code: str) -> Optional[pd.DataFrame]:
+    """BaoStock K线兜底"""
+    try:
+        import baostock as bs
+        lg = bs.login()
+        if lg.error_code != "0":
+            return None
+        prefix = "sh" if code.startswith("6") else "sz"
+        end = datetime.today().strftime("%Y-%m-%d")
+        start = (datetime.today() - timedelta(days=90)).strftime("%Y-%m-%d")
+        rs = bs.query_history_k_data_plus(
+            f"{prefix}.{code}", "date,close,volume", start_date=start, end_date=end, frequency="d", adjustflag="2"
+        )
+        rows = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
+        bs.logout()
+        if not rows:
+            return None
+        df = pd.DataFrame(rows, columns=["date", "close", "volume"])
+        df["date"] = pd.to_datetime(df["date"])
+        for c in ["close", "volume"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df.dropna().sort_values("date").reset_index(drop=True)
+    except Exception:
+        return None
 
 
 def _check_ma_position(df: pd.DataFrame) -> Dict:
