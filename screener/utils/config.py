@@ -22,7 +22,7 @@ def load_config(path: str = "config.yaml") -> dict:
     cfg.setdefault("feishu", {})
     cfg.setdefault("plugins", {
         "llm_analysis": {"enabled": True},
-        "ai_analysis": {"enabled": True},
+        "ai_analysis": {"enabled": False},
         "stock_list_analysis": {"enabled": True},
         "technical_analysis": {"enabled": True},
         "fundamental_analysis": {"enabled": False},

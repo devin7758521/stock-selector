@@ -415,7 +415,7 @@ class EnhancedLLMAnalyzer:
 
     def _calculate_enhanced_weighted_score(
         self, indicators: Dict[str, Any], technical_analysis: Optional[Dict],
-        context: Dict[str, Any], llm_score: float, ai_score: int,
+        context: Dict[str, Any], llm_score: float, ai_score: Optional[int],
         tech_score: int, stock_data: Dict[str, Any],
         news_context: Optional[str] = None) -> tuple:
         """
@@ -428,17 +428,20 @@ class EnhancedLLMAnalyzer:
         volume_100 = volume_quality * 100.0 / 30.0
         sector_100 = sector_bonus * 100.0 / 15.0
 
-        ai_norm = ai_score / 100.0 * 60
-        llm_norm = llm_score / 100.0 * 60
-        if abs(ai_norm - llm_norm) > 15:
-            combined_ai_llm = max(ai_norm, llm_norm)
-        else:
-            combined_ai_llm = ai_norm * 0.4 + llm_norm * 0.6
-        llm_ai_100 = combined_ai_llm * 100.0 / 60.0
-
         news_available = bool(news_context and len(news_context.strip()) > 30)
-        if not news_available:
-            llm_ai_100 = ai_norm * 100.0 / 60.0
+
+        if ai_score is not None:
+            ai_norm = ai_score / 100.0 * 60
+            llm_norm = llm_score / 100.0 * 60
+            if abs(ai_norm - llm_norm) > 15:
+                combined_ai_llm = max(ai_norm, llm_norm)
+            else:
+                combined_ai_llm = ai_norm * 0.4 + llm_norm * 0.6
+            llm_ai_100 = combined_ai_llm * 100.0 / 60.0
+            if not news_available:
+                llm_ai_100 = ai_norm * 100.0 / 60.0
+        else:
+            llm_ai_100 = llm_score
 
         llm_direct_100 = llm_score
 
@@ -474,10 +477,10 @@ class EnhancedLLMAnalyzer:
             return sum(available[k] * (weights[k] / total_weight) for k in available)
         return news_score * 0.40 + policy_score * 0.20 + macro_score * 0.15 + market_score * 0.25
 
-    def _extract_ai_score(self, ai_analysis: Optional[Dict]) -> int:
+    def _extract_ai_score(self, ai_analysis: Optional[Dict]) -> Optional[int]:
         if ai_analysis:
             return ai_analysis.get('ai_signal_score', 50)
-        return 50
+        return None
 
     def _calculate_weighted_score(self, llm_score: float, ai_score: int,
                                  tech_score: int) -> float:
@@ -731,12 +734,7 @@ class EnhancedLLMAnalyzer:
                 policy_info = r.get("policy_info", "")
                 macro_info = r.get("macro_info", "")
                 llm_news_reason = r.get("llm_news_reason", "")  # LLM情绪分析原文
-                ai_analysis = {
-                    "ai_buy_signal": r.get("ai_buy_signal", "N/A"),
-                    "ai_signal_score": r.get("ai_signal_score", 50),
-                    "ai_trend_status": r.get("ai_trend_status", "N/A"),
-                    "ai_rating_reason": r.get("ai_rating_reason", "N/A"),
-                } if "ai_buy_signal" in r else r.get("ai_analysis")
+                ai_analysis = None
                 stock_name = r.get("name", r.get("stock_name", "未知"))
                 code = r.get("code", "")
 

@@ -498,16 +498,6 @@ class LLMNewsAnalyzer:
             if market_d and market_d != "N/A":
                 lines.append(f"【市场环境】{market_d}")
 
-            # ── AI 分析 ──
-            ai_signal = r.get("ai_buy_signal", "")
-            ai_score = r.get("ai_signal_score", 50)
-            ai_reason = r.get("ai_rating_reason", "")
-            if ai_signal and ai_signal != "N/A":
-                line = f"【AI信号】{ai_signal}（评分{ai_score}）"
-                if ai_reason and ai_reason != "N/A":
-                    line += f"  理由：{ai_reason}"
-                lines.append(line)
-
             # ── 综合推理（Step 5.5 的 synthesis） ──
             rec = r.get("llm_recommendation_reason") or r.get("recommendation_reason", "")
             if rec:

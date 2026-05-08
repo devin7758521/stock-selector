@@ -281,9 +281,6 @@ def send_feishu(results: List[Dict], cfg: dict, sector_results: Optional[List[Di
             if 'vol_deviation_pct' in r:
                 content_lines.append(f"  偏离: {r['vol_deviation_pct']}%")
 
-            if 'ai_buy_signal' in r:
-                content_lines.append(f"  AI信号: {r['ai_buy_signal']}")
-
             if 'llm_stars' in r:
                 ls = r["llm_stars"]
                 if ls is not None and ls <= 0:
@@ -533,8 +530,6 @@ def send_feishu_card(results: List[Dict], cfg: dict, sector_results: Optional[Li
                 stock_lines.append(f"价格: **{r['price']}**")
             if 'vol_deviation_pct' in r:
                 stock_lines.append(f"偏离: **{r['vol_deviation_pct']}%**")
-            if 'ai_buy_signal' in r:
-                stock_lines.append(f"AI信号: {r['ai_buy_signal']}")
             if stars:
                 stock_lines.append(f"LLM评级: **{stars}星** {stars_str}")
             if 'llm_operation_advice' in r:

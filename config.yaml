@@ -31,7 +31,7 @@ wecom:
 
 plugins:
   ai_analysis:
-    enabled: true
+    enabled: false
   llm_analysis:
     enabled: true
     primary_model: "gemini-2.5-flash"      # 主模型

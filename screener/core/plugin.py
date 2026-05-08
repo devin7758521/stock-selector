@@ -183,7 +183,6 @@ class PluginManager:
         """
         priority = {
             "technical_analysis": 10,
-            "ai_analysis": 30,
             "stock_list_analysis": 40,
             "llm_analysis": 100,
         }
