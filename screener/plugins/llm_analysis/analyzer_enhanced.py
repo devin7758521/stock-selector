@@ -45,7 +45,7 @@ class AnalysisResult:
     weighted_score: float = 0.0
     llm_weight: float = 0.5
     ai_weight: float = 0.3
-    technical_weight: float = 0.2
+    technical_weight: float = 0.0
 
     score_detail: Optional[Dict[str, Any]] = None
 
@@ -268,7 +268,7 @@ class EnhancedLLMAnalyzer:
                 weighted_score=weighted_score,
                 llm_weight=0.5,
                 ai_weight=0.3,
-                technical_weight=0.2,
+                technical_weight=0.0,
                 score_detail=score_detail,
                 news_headlines=news_headlines,
                 policy_info=policy_info,
@@ -419,25 +419,15 @@ class EnhancedLLMAnalyzer:
         tech_score: int, stock_data: Dict[str, Any],
         news_context: Optional[str] = None) -> tuple:
         """
-        新评分公式（子维度归一化到 0~100，理论满分 ~97）：
-        weighted = 技术共振×22% + 量能质量×28% + LLM/AI融合×22%
-                 + LLM直接分×15% + 板块联动×8% + 旧技术分×5%
-
-        LLM直接分 = news×35% + policy×25% + macro×20% + market×20%
-        政策/宏观直达加权分，不再嵌套五层稀释。
+        评分公式（子维度归一化到 0~100，技术面不给权重）：
+        weighted = 量能质量×45% + LLM/AI融合×25% + LLM直接分×20% + 板块联动×10%
         """
-        tech_resonance = self._calculate_tech_resonance_score(
-            indicators, technical_analysis, context
-        )
         volume_quality = self._calculate_volume_quality_score(indicators)
         sector_bonus = self._calculate_sector_linkage_score(stock_data)
 
-        # 归一化到 0~100
-        tech_100 = tech_resonance * 100.0 / 60.0
         volume_100 = volume_quality * 100.0 / 30.0
         sector_100 = sector_bonus * 100.0 / 15.0
 
-        # AI/LLM 融合
         ai_norm = ai_score / 100.0 * 60
         llm_norm = llm_score / 100.0 * 60
         if abs(ai_norm - llm_norm) > 15:
@@ -446,25 +436,21 @@ class EnhancedLLMAnalyzer:
             combined_ai_llm = ai_norm * 0.4 + llm_norm * 0.6
         llm_ai_100 = combined_ai_llm * 100.0 / 60.0
 
-        # 新闻可用性
         news_available = bool(news_context and len(news_context.strip()) > 30)
         if not news_available:
             llm_ai_100 = ai_norm * 100.0 / 60.0
 
-        # LLM直接分：政策+宏观不再嵌套，直接进加权（LLM分已是0~100量纲）
         llm_direct_100 = llm_score
 
         weighted = (
-            tech_100 * 0.18 +      # 技术共振
-            volume_100 * 0.32 +    # 量能质量（量比+成交额+量价信号，真金白银）
-            llm_ai_100 * 0.22 +    # LLM/AI 智能融合
-            llm_direct_100 * 0.15 + # LLM直接分（含政策25%+宏观20%）
-            sector_100 * 0.08 +    # 板块联动
-            tech_score * 0.05      # 旧技术分
+            volume_100 * 0.45 +    # 量能质量（量比+成交额+量价信号，真金白银）
+            llm_ai_100 * 0.25 +    # LLM/AI 智能融合
+            llm_direct_100 * 0.20 + # LLM直接分（含政策25%+宏观20%）
+            sector_100 * 0.10      # 板块联动
         )
 
         detail = {
-            "tech_resonance": round(tech_100, 1),
+            "tech_resonance": 0,
             "volume_quality": round(volume_100, 1),
             "sector_bonus": round(sector_100, 1),
             "combined_ai_llm": round(llm_ai_100, 1),
