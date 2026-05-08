@@ -184,10 +184,20 @@ class EnhancedLLMAnalyzer:
                     logger.info(f"LLM分析完成，情绪: {news_score}, 政策: {llm_policy_score}, 宏观: {llm_macro_score}")
 
             policy_detail, _ = policy_analyzer.analyze(context, news_context)
-            policy_score = llm_policy_score if llm_policy_score is not None else 50
+            # 政策面无实质内容 → 传 None，不参与 LLM 加权
+            _no_policy = ("", "信息不足", "无政策相关信息", "分析异常")
+            if llm_policy_score is not None and policy_info and policy_info not in _no_policy:
+                policy_score = llm_policy_score
+            else:
+                policy_score = None
 
             market_detail, market_score = market_analyzer.analyze(context)
-            macro_score = llm_macro_score if llm_macro_score is not None else 50
+            # 宏观面无实质内容 → 传 None，不参与 LLM 加权
+            _no_macro = ("", "信息不足", "无宏观相关信息", "分析异常")
+            if llm_macro_score is not None and macro_info and macro_info not in _no_macro:
+                macro_score = llm_macro_score
+            else:
+                macro_score = None
 
             llm_base_score = self._calculate_llm_score(
                 news_score, policy_score, macro_score, market_score
