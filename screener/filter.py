@@ -28,7 +28,7 @@ _lock = threading.Lock()
 _stats = {
     "total": 0, "pass_price": 0, "pass_amount": 0,
     "pass_weeks": 0, "pass_ma25": 0, "pass_vol_up": 0, "pass_dev": 0,
-    "pass_macd": 0,
+    "pass_macd": 0, "pass_monthly_ma": 0,
 }
 
 
@@ -43,7 +43,8 @@ def print_stats():
         logger.info(f"  站上25周均线    : {_stats['pass_ma25']:>5} 只")
         logger.info(f"  5周量均线向上   : {_stats['pass_vol_up']:>5} 只")
         logger.info(f"  偏离度通过      : {_stats['pass_dev']:>5} 只")
-        logger.info(f"  周K MACD通过    : {_stats['pass_macd']:>5} 只  ← 最终入选")
+        logger.info(f"  周K MACD通过    : {_stats['pass_macd']:>5} 只")
+        logger.info(f"  月K MA5>MA10    : {_stats['pass_monthly_ma']:>5} 只  ← 最终入选")
         logger.info("=" * 55)
 
 
@@ -276,6 +277,17 @@ def calc_indicators(df_daily: pd.DataFrame, cfg: dict) -> Optional[dict]:
 
     with _lock:
         _stats["pass_macd"] += 1
+
+    # ── 月K MA5 > MA10 ──────────────────────────────────────
+    df_m = df_daily.set_index("date").resample("ME").agg({"close": "last", "volume": "sum", "amount": "sum"}).dropna()
+    if len(df_m) < 10:
+        return None
+    ma5_m = df_m["close"].rolling(5).mean()
+    ma10_m = df_m["close"].rolling(10).mean()
+    if pd.isna(ma5_m.iloc[-1]) or pd.isna(ma10_m.iloc[-1]) or ma5_m.iloc[-1] <= ma10_m.iloc[-1]:
+        return None
+    with _lock:
+        _stats["pass_monthly_ma"] += 1
 
     # ── 新增强化指标（用于排名阶段的硬数据评分） ──────────────
     # 1. 量比（相对于自身 20 日均量）
