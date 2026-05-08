@@ -645,30 +645,36 @@ def pick_leader_stocks(sector_name: str, sector_code: str, top_n: int = 3) -> Li
         if ma_info["pullback"] and ma_info["vol_shrinking"]:
             reasons.append("缩量回调")
         elif not ma_info["pullback"] and s["gain_pct"] > 0:
-            if s["volume_ratio"] > 1.5:
+            if s["volume_ratio"] > 2.5:
                 warnings.append("放量追涨")
             else:
                 reasons.append("温和上涨")
 
-        if ma_info["consecutive_up"] >= 5:
+        if ma_info["consecutive_up"] >= 8:
             warnings.append(f"连涨{ma_info['consecutive_up']}天")
 
         if ma_info["vol_shrinking"] and not ma_info["pullback"]:
             reasons.append("缩量整理")
 
-        if len(warnings) >= 3:
-            signal = "回避"
-        elif len(warnings) >= 1:
-            signal = "观望"
-        elif len(reasons) >= 2:
-            signal = "可介入"
+        if len(warnings) >= 2:
+            signal = "回避"        # 多个风险信号
+        elif len(reasons) >= 2 and len(warnings) <= 1:
+            signal = "可介入"      # 2+理由，至多1个警告
+        elif len(reasons) >= 1:
+            signal = "观望"        # 有亮点但不够
         else:
             signal = "观望"
 
         s["signal"] = signal
         s["buy_reasons"] = reasons
         s["risk_warnings"] = warnings
-        s["signal_reason"] = "；".join(reasons) if signal == "可介入" else "⚠️ " + "；".join(warnings)
+        if signal == "可介入":
+            r = "；".join(reasons)
+            if warnings:
+                r += " ⚠️ " + "；".join(warnings)
+            s["signal_reason"] = r
+        else:
+            s["signal_reason"] = "⚠️ " + "；".join(warnings) if warnings else "待观察"
         candidates.append(s)
 
     candidates.sort(key=lambda x: (0 if x["signal"] == "可介入" else 1, -x["amount_yi"]))
