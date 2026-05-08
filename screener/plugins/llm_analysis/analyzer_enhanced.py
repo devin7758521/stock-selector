@@ -217,6 +217,7 @@ class EnhancedLLMAnalyzer:
                 tech_score=tech_score,
                 stock_data=(stock_data or {}),
                 news_context=news_context,
+                market_detail=market_detail,
             )
 
             operation_advice, confidence_level = self._generate_operation_advice(weighted_score)
@@ -393,17 +394,14 @@ class EnhancedLLMAnalyzer:
 
         return max(0, min(30, score))
 
-    def _calculate_sector_linkage_score(self, stock_data: Dict[str, Any]) -> float:
-        """板块联动加分（0~15），来源于 sector_results 注入"""
+    def _calculate_sector_linkage_score(self, market_detail: str = "") -> float:
+        """板块联动加分（0~15），从 MarketEnvironmentAnalyzer 的输出提取板块排名"""
         score = 0.0
-        sector_hint = stock_data.get("llm_market_detail", "") or \
-                       stock_data.get("market_environment_analysis", "") or ""
-        if not sector_hint:
+        if not market_detail:
             return 0.0
 
-        # 从 LLM 市场环境分析文本中匹配板块排名
         import re
-        rank_match = re.search(r'今日涨幅第(\d+)', sector_hint)
+        rank_match = re.search(r'今日涨幅第(\d+)', market_detail)
         if rank_match:
             rank = int(rank_match.group(1))
             if rank == 1:
@@ -416,9 +414,9 @@ class EnhancedLLMAnalyzer:
                 score += 3
 
         # 板块联动强度关键词
-        if '极强' in sector_hint:
+        if '极强' in market_detail:
             score += 3
-        elif '强' in sector_hint and '不强' not in sector_hint:
+        elif '强' in market_detail and '不强' not in market_detail:
             score += 1
 
         return max(0, min(15, score))
@@ -427,13 +425,15 @@ class EnhancedLLMAnalyzer:
         self, indicators: Dict[str, Any], technical_analysis: Optional[Dict],
         context: Dict[str, Any], llm_score: float, ai_score: Optional[int],
         tech_score: int, stock_data: Dict[str, Any],
-        news_context: Optional[str] = None) -> tuple:
+        news_context: Optional[str] = None,
+        market_detail: str = "") -> tuple:
         """
         评分公式（子维度归一化到 0~100，技术面不给权重）：
         weighted = 量能质量×45% + LLM/AI融合×25% + LLM直接分×20% + 板块联动×10%
         """
         volume_quality = self._calculate_volume_quality_score(indicators)
-        sector_bonus = self._calculate_sector_linkage_score(stock_data)
+        sector_bonus = self._calculate_sector_linkage_score(market_detail)
+        tech_resonance = self._calculate_tech_resonance_score(indicators, technical_analysis, context)
 
         volume_100 = volume_quality * 100.0 / 30.0
         sector_100 = sector_bonus * 100.0 / 15.0
@@ -463,7 +463,7 @@ class EnhancedLLMAnalyzer:
         )
 
         detail = {
-            "tech_resonance": 0,
+            "tech_resonance": round(tech_resonance, 1),
             "volume_quality": round(volume_100, 1),
             "sector_bonus": round(sector_100, 1),
             "combined_ai_llm": round(llm_ai_100, 1),
@@ -491,11 +491,6 @@ class EnhancedLLMAnalyzer:
         if ai_analysis:
             return ai_analysis.get('ai_signal_score', 50)
         return None
-
-    def _calculate_weighted_score(self, llm_score: float, ai_score: int,
-                                 tech_score: int) -> float:
-        """旧加权分（保留兼容）"""
-        return llm_score * 0.5 + ai_score * 0.3 + tech_score * 0.2
 
     def _generate_operation_advice(self, weighted_score: float) -> tuple:
         """评分 0~100 的操作建议映射"""
