@@ -437,12 +437,14 @@ def _fetch_stock_kline(code: str, days: int = 30) -> Optional[pd.DataFrame]:
     df = _fetch_stock_kline_eastmoney(code, days)
     if df is not None:
         return df
-    # 最后兜底：复用 datasources 的各数据源，但跳过 _to_df 的200行限制
-    logger.debug(f"东方财富K线 {code} 失败 → 降级 datasources 兜底")
+    # 兜底：腾讯 → 新浪 → baostock → akshare → datasources全链
+    logger.debug(f"东方财富K线 {code} 失败 → 降级备用源")
     for name, fn in (
-        ("tencent", lambda: _fetch_source_tencent(code)),
-        ("sina", lambda: _fetch_source_sina(code)),
-        ("baostock", lambda: _fetch_source_baostock(code)),
+        ("tencent",   lambda: _fetch_source_tencent(code)),
+        ("sina",      lambda: _fetch_source_sina(code)),
+        ("baostock",  lambda: _fetch_source_baostock(code)),
+        ("akshare",   lambda: _fetch_source_akshare(code)),
+        ("datasources", lambda: _fetch_source_datasources(code, days)),
     ):
         try:
             dff = fn()
@@ -521,6 +523,36 @@ def _fetch_source_baostock(code: str) -> Optional[pd.DataFrame]:
         return df.dropna().sort_values("date").reset_index(drop=True)
     except Exception:
         return None
+
+
+def _fetch_source_akshare(code: str) -> Optional[pd.DataFrame]:
+    """AKShare K线兜底（GitHub Actions 上可能可用）"""
+    try:
+        import akshare as ak
+        start = (datetime.today() - timedelta(days=60)).strftime("%Y%m%d")
+        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start, adjust="qfq")
+        if df is None or df.empty:
+            return None
+        df = df.rename(columns={"日期": "date", "收盘": "close", "成交量": "volume"})
+        df["date"] = pd.to_datetime(df["date"])
+        for c in ["close", "volume"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
+    except Exception:
+        return None
+
+
+def _fetch_source_datasources(code: str, days: int = 30) -> Optional[pd.DataFrame]:
+    """复用 datasources 多源降级链（取最后 days 行，跳过200行限制）"""
+    try:
+        from screener.datasources import fetch_daily_kline
+        cfg = {"datasources": {}, "request": {"max_retries": 1, "delay_min": 0.05, "delay_max": 0.1}}
+        df = fetch_daily_kline(code, cfg)
+        if df is not None and len(df) >= days:
+            return df.tail(days).reset_index(drop=True)
+    except Exception:
+        pass
+    return None
 
 
 def _check_ma_position(df: pd.DataFrame) -> Dict:
