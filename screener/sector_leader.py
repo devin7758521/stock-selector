@@ -195,7 +195,12 @@ def _fuzzy_match_sector(zt_name: str, em_names: List[str]) -> Optional[str]:
 
 
 def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
-    """综合涨停数(40%)+成交额(35%)+涨幅(25%) 识别主线板块"""
+    """
+    识别主线板块（以东财板块成交额+涨幅为主，涨停数为加分项）
+
+    策略：东财板块数据可靠带code → 基础排序（成交额70%+涨幅30%）
+          涨停数作为加分项（模糊匹配akshare板块名），但匹配不到不影响入选
+    """
     limit_up_list = fetch_limit_up_board()
     sector_details = _sector_detail_eastmoney()
 
@@ -212,56 +217,62 @@ def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
         ]
 
     em_names = [s["name"] for s in sector_details]
-    em_code_map = {s["name"]: s["code"] for s in sector_details}
 
-    # 把 akshare 涨停板块名 → 映射到东方财富板块名（模糊匹配）
-    raw_sector_zt: Dict[str, int] = {}
+    # 模糊匹配：akshare涨停板块名 → 东财板块名
+    zt_by_em: Dict[str, int] = {}
+    raw_zt: Dict[str, int] = {}
+    matched_count = 0
+    unmatched_samples = []
     for stock in limit_up_list:
         s = stock.get("sector", "").strip()
         if not s or s in ("无", "其它", "null"):
             continue
+        raw_zt[s] = raw_zt.get(s, 0) + 1
         matched = _fuzzy_match_sector(s, em_names)
-        target = matched if matched else s  # 匹配不到保留原名（至少能展示）
-        raw_sector_zt[target] = raw_sector_zt.get(target, 0) + 1
+        if matched:
+            zt_by_em[matched] = zt_by_em.get(matched, 0) + 1
+            matched_count += 1
+        elif len(unmatched_samples) < 5:
+            unmatched_samples.append(s)
 
-    # 涨停数按东方财富板块名统计
-    sector_zt: Dict[str, int] = {}
-    for s in sector_details:
-        name = s["name"]
-        count = raw_sector_zt.get(name, 0)
-        # 也累加模糊匹配后落到该板块的计数（matched_name == name）
-        if count > 0:
-            sector_zt[name] = count
-
+    total_limit_up = len(limit_up_list)
     logger.info(
-        f"[板块映射] {len(raw_sector_zt)} 个涨停板块 → {len(sector_zt)} 个匹配到东方财富板块"
+        f"[涨停映射] {total_limit_up}只涨停 → {matched_count}只匹配到东财板块 "
+        f"({len(zt_by_em)}个板块), {len(raw_zt)}个原始板块名"
     )
+    if unmatched_samples:
+        logger.info(f"[涨停映射] 未匹配样本: {unmatched_samples}")
 
-    # 归一化 + 加权
-    zt_vals = [sector_zt.get(s["name"], 0) for s in sector_details]
+    # 基础排序：成交额(70%) + 涨幅(30%)，涨停数为加分项
     amt_vals = [s["amount_yi"] for s in sector_details if s["amount_yi"] > 0]
     gain_vals = [s["gain_pct"] for s in sector_details]
 
-    max_zt = max(zt_vals) if zt_vals else 1
     max_amt = max(amt_vals) if amt_vals else 1
     max_gain = max(max(gain_vals) if gain_vals else 1, 1)
+    max_zt = max(zt_by_em.values()) if zt_by_em else 1
 
     scored = []
     for s in sector_details:
-        zt = sector_zt.get(s["name"], 0)
+        code = s.get("code", "")
+        if not code:
+            continue
+
+        zt = zt_by_em.get(s["name"], 0)
         amt = s["amount_yi"]
         gain = s["gain_pct"]
-        score = (zt / max_zt * 40) + (amt / max_amt * 35) + (gain / max_gain * 25)
-        code = em_code_map.get(s["name"], "")
-        # 没有匹配到东方财富板块code的不纳入（无法取成分股）
-        if code:
-            scored.append({
-                "name": s["name"], "code": code,
-                "score": round(score, 1),
-                "limit_up_count": zt,
-                "gain_pct": round(gain, 2),
-                "amount_yi": round(amt, 2),
-            })
+
+        # 基础分 = 成交额(55%) + 涨幅(20%) + 涨停加分(25%)
+        base = (amt / max_amt * 55) + (gain / max_gain * 20)
+        bonus = (zt / max_zt * 25) if zt > 0 else 0
+        score = base + bonus
+
+        scored.append({
+            "name": s["name"], "code": code,
+            "score": round(score, 1),
+            "limit_up_count": zt,
+            "gain_pct": round(gain, 2),
+            "amount_yi": round(amt, 2),
+        })
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     for i, s in enumerate(scored[:top_n]):
@@ -270,7 +281,7 @@ def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
     top = scored[:top_n]
     logger.info(
         f"[主线板块] Top{top_n}: "
-        + " | ".join(f"{s['rank']}.{s['name']}({s['score']}分,{s['limit_up_count']}涨停)" for s in top)
+        + " | ".join(f"{s['rank']}.{s['name']}({s['score']}分,{s['limit_up_count']}涨停,{s['amount_yi']}亿)" for s in top)
     )
     return top
 
