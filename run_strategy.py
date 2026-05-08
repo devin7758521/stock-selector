@@ -87,8 +87,7 @@ def run(config_path: str = "config.yaml") -> dict:
         sector_name = sector["name"]
         sector_code = sector.get("code", "")
         if not sector_code:
-            logger.warning(f"  {sector_name}: 无板块代码，跳过")
-            continue
+            logger.warning(f"  {sector_name}: 无板块代码，尝试涨停聚合降级")
 
         leaders = pick_leader_stocks(sector_name, sector_code, top_n=3)
         sector["leader_stocks"] = leaders

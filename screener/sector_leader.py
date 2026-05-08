@@ -207,7 +207,8 @@ def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
     if not sector_details:
         logger.warning("无法获取板块详情，仅用涨幅排名")
         top_sectors = fetch_top_sectors_by_gain(top_n)
-        if top_sectors:
+        # 涨幅排名有带代码的板块 → 直接返回
+        if top_sectors and any(s.get("code") for s in top_sectors):
             return [
                 {"rank": i + 1, "name": s["name"], "code": s.get("code", ""),
                  "score": 0, "limit_up_count": 0,
@@ -217,9 +218,9 @@ def identify_leading_sectors(top_n: int = 3) -> List[Dict]:
                 for i, s in enumerate(top_sectors)
             ]
 
-        # 最后兜底：涨停板数据聚合（akshare 在 GitHub Actions 上可用，
+        # 兜底：涨停板数据聚合（akshare 在 GitHub Actions 上可用，
         # 涨停股自带所属行业，按涨停数降序取 top_n 作为主线板块）
-        logger.warning("涨幅排名也失败，改用涨停板数据聚合识别板块")
+        logger.warning("涨幅排名无板块代码，改用涨停板数据聚合识别板块")
         zt_sectors: Dict[str, Dict] = {}
         for stock in limit_up_list:
             s = stock.get("sector", "").strip()
@@ -573,8 +574,9 @@ def pick_leader_stocks(sector_name: str, sector_code: str, top_n: int = 3) -> Li
             limit_up_list = fetch_limit_up_board()
             stocks = [
                 {"code": s["code"], "name": s["name"],
-                 "price": 0, "gain_pct": 0, "amount_yi": 0,
-                 "turnover_pct": 0, "volume_ratio": 1.0}
+                 "price": _MIN_PRICE, "gain_pct": 10.0, "amount_yi": 1.0,
+                 "turnover_pct": 0, "volume_ratio": 1.0,
+                 "_fallback": True}
                 for s in limit_up_list
                 if s.get("sector", "").strip() == sector_name
             ]
@@ -588,7 +590,7 @@ def pick_leader_stocks(sector_name: str, sector_code: str, top_n: int = 3) -> Li
 
     candidates = []
     for s in stocks:
-        if s["price"] < _MIN_PRICE or s["amount_yi"] < 1.0:
+        if not s.get("_fallback") and (s["price"] < _MIN_PRICE or s["amount_yi"] < 1.0):
             continue
 
         df = _fetch_stock_kline(s["code"], days=30)
