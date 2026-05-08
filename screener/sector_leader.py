@@ -600,8 +600,8 @@ def pick_leader_stocks(sector_name: str, sector_code: str, top_n: int = 3) -> Li
     当 sector_code 为空时（涨停聚合降级），用涨停板中该板块的股票作为候选池。
     """
     stocks = _fetch_sector_stocks_eastmoney(sector_code) if sector_code else []
-    if not stocks and not sector_code:
-        # 降级：涨停板中取该板块的股票
+    if not stocks:
+        # 降级：成分股API失败 → 涨停板中取该板块的股票
         try:
             limit_up_list = fetch_limit_up_board()
             stocks = [
