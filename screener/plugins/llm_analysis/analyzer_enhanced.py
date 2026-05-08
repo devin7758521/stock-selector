@@ -593,30 +593,50 @@ class EnhancedLLMAnalyzer:
                           news_detail: str, policy_detail: str,
                           market_detail: str, news_headlines: str,
                           policy_info: str, macro_info: str,
-                          ai_analysis: Optional[Dict],
+                          llm_news_reason: str = "",
+                          ai_analysis: Optional[Dict] = None,
                           stock_name: str = "标的") -> str:
-        """调用 LLM 进行综合推理，生成有逻辑链的投资理由。"""
+        """调用 LLM 进行综合推理，LLM分析原文优先于关键词占位符。"""
         if not self.deepseek_analyzer:
             return ""
 
+        # 技术面
         td = technical_detail if technical_detail and technical_detail != "N/A" else "暂无技术面数据"
-        nd = news_detail if news_detail and news_detail != "N/A" else "暂无消息面数据"
-        if news_headlines:
-            nd = f"{nd}。新闻摘要：{news_headlines}"
-        pd = policy_detail if policy_detail and policy_detail != "N/A" else "暂无政策面数据"
-        if policy_info:
-            pd = f"{pd}。政策要点：{policy_info}"
-        md = market_detail if market_detail and market_detail != "N/A" else "暂无市场环境数据"
-        if macro_info:
-            md = f"{md}。宏观要点：{macro_info}"
+
+        # 消息面：LLM分析原文 > 关键词计数 > 默认
+        nd = "暂无消息面数据"
+        if llm_news_reason and llm_news_reason not in ("信息不足", "无新闻信息", ""):
+            nd = llm_news_reason
+            if news_headlines:
+                nd += f"\n新闻标题：{news_headlines}"
+        elif news_headlines:
+            nd = f"新闻要点：{news_headlines}"
+        elif news_detail and news_detail != "N/A":
+            nd = news_detail
+
+        # 政策面：LLM policy_impact > 默认
+        pd = "暂无明显政策面影响"
+        is_placeholder = policy_detail in ("政策面分析已由LLM完成", "N/A", "")
+        if policy_info and policy_info not in ("信息不足", "无政策相关信息", "分析异常", ""):
+            pd = policy_info
+        elif not is_placeholder and policy_detail:
+            pd = policy_detail
+
+        # 宏观/市场环境：LLM macro_impact > 市场分析 > 默认
+        md = "暂无市场环境数据"
+        if macro_info and macro_info not in ("信息不足", "无宏观相关信息", "分析异常", ""):
+            md = macro_info
+        elif market_detail and market_detail != "N/A" and market_detail != "暂无明显市场环境影响":
+            md = market_detail
 
         ai_info = ""
         if ai_analysis:
             ai_signal = ai_analysis.get('ai_buy_signal', 'N/A')
             ai_score_val = ai_analysis.get('ai_signal_score', 'N/A')
-            ai_info = f"AI技术指标信号：{ai_signal}（评分{ai_score_val}分）"
+            if ai_signal != "N/A":
+                ai_info = f"AI技术指标信号：{ai_signal}（评分{ai_score_val}分）"
 
-        user_prompt = f"""请对以下股票进行多维度综合推理：
+        user_prompt = f"""请对以下股票进行多维度综合推理，严格基于给定的信息，不要凭空推测：
 
 【股票】{stock_name}
 【星级】{stars}星（满分5星）
@@ -633,16 +653,15 @@ class EnhancedLLMAnalyzer:
 
 【市场环境】
 {md}
-
 {f"【AI技术指标】{ai_info}" if ai_info else ""}
 
 请基于以上信息，输出：
-1. 指出各维度之间是否存在矛盾或共振
-2. 说明哪个维度是当前最关键的驱动因素
-3. 给出一段80-150字的综合投资理由，解释为什么该股值得或不值得投资
-4. 给出一个0-100的推理评分（信心加权分），末尾单独一行写：推理评分: XX
+1. 各维度之间是否存在矛盾或共振（若某维度确实无信息，如实说明，不要反复强调）
+2. 当前最关键的驱动因素
+3. 一段80-150字的综合投资理由
+4. 推理评分: XX
 
-语气要专业、客观、有逻辑性，避免套话。"""
+专业、简洁、基于事实。"""
 
         try:
             synthesis = self.deepseek_analyzer.synthesize(user_prompt, max_tokens=400)
@@ -683,8 +702,18 @@ class EnhancedLLMAnalyzer:
             success=False,
             stars=0,
             star_reason="分析异常，跳过评级",
+            error_message=error_message,
+            technical_analysis_detail="",
+            news_analysis_detail="",
+            policy_analysis_detail="",
+            market_environment_analysis="",
+            recommendation_reason="",
+            weighted_score=0,
             score_detail=None,
-            error_message=error_message
+            news_headlines="",
+            policy_info="",
+            macro_info="",
+            llm_news_reason="",
         )
 
     def rank_stocks(self, stock_results: List[Dict], top_n: int = 10) -> List[Dict]:
@@ -715,6 +744,7 @@ class EnhancedLLMAnalyzer:
                 news_headlines = r.get("news_headlines", "")
                 policy_info = r.get("policy_info", "")
                 macro_info = r.get("macro_info", "")
+                llm_news_reason = r.get("llm_news_reason", "")  # LLM情绪分析原文
                 ai_analysis = {
                     "ai_buy_signal": r.get("ai_buy_signal", "N/A"),
                     "ai_signal_score": r.get("ai_signal_score", 50),
@@ -729,6 +759,7 @@ class EnhancedLLMAnalyzer:
                     technical_detail,
                     news_detail, policy_detail, market_detail,
                     news_headlines, policy_info, macro_info,
+                    llm_news_reason,
                     ai_analysis, stock_name
                 )
 

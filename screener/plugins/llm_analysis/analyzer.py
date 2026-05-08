@@ -16,18 +16,33 @@ logger = logging.getLogger(__name__)
 class AnalysisResult:
     """分析结果数据类"""
     sentiment_score: int
-    trend_prediction: str
-    operation_advice: str
-    confidence_level: str
-    analysis_summary: str
-    news_summary: str
-    risk_warning: str
-    buy_reason: str
-    model_used: str
-    success: bool
-    stars: int  # 五星评级 1-5
-    star_reason: str  # 打星理由
+    trend_prediction: str = ""
+    operation_advice: str = ""
+    confidence_level: str = ""
+    analysis_summary: str = ""
+    news_summary: str = ""
+    risk_warning: str = ""
+    buy_reason: str = ""
+    model_used: str = ""
+    success: bool = False
+    stars: int = 0
+    star_reason: str = ""
     error_message: Optional[str] = None
+    # 增强字段（analyzer_enhanced 传入）
+    technical_analysis_detail: str = ""
+    news_analysis_detail: str = ""
+    policy_analysis_detail: str = ""
+    market_environment_analysis: str = ""
+    recommendation_reason: str = ""
+    weighted_score: float = 0.0
+    llm_weight: float = 0.0
+    ai_weight: float = 0.0
+    technical_weight: float = 0.0
+    score_detail: Optional[Dict] = None
+    news_headlines: str = ""
+    policy_info: str = ""
+    macro_info: str = ""
+    llm_news_reason: str = ""
 
 
 class LLMAnalyzer:

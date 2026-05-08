@@ -219,6 +219,12 @@ class LLMAnalysisPlugin(Plugin):
                 "ai_weight": result.ai_weight,
                 "technical_weight": result.technical_weight,
                 "score_detail": result.score_detail,
+
+                # 新增：LLM 分析原始文本（用于 rank_stocks 合成）
+                "llm_news_reason": result.llm_news_reason,
+                "news_headlines": result.news_headlines,
+                "policy_info": result.policy_info,
+                "macro_info": result.macro_info,
             }
         except Exception as e:
             logger.error(f"LLM 分析失败: {e}", exc_info=True)
