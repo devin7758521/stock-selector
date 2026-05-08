@@ -37,6 +37,9 @@ class LLMAnalysisPlugin(Plugin):
     5. 预留真正的LLM API接口
     """
     
+    # 行业缓存（类级别，避免重复请求）
+    _industry_cache: Dict[str, str] = {}
+
     def __init__(self, name: str, config: Dict[str, Any]):
         """
         初始化插件
@@ -390,6 +393,24 @@ class LLMAnalysisPlugin(Plugin):
             logger.error(f"Top3深度分析失败: {e}")
             return None
 
+    def _get_stock_industry(self, code: str) -> str:
+        """获取股票所属行业，带缓存。失败返回空字符串。"""
+        if code in self._industry_cache:
+            return self._industry_cache[code]
+        try:
+            import akshare as ak
+            info = ak.stock_individual_info_em(symbol=code)
+            if info is not None and not info.empty:
+                row = info[info["item"] == "行业"]
+                if not row.empty:
+                    industry = str(row.iloc[0]["value"]).strip()
+                    self._industry_cache[code] = industry
+                    return industry
+        except Exception as e:
+            logger.debug(f"[industry] {code} 获取行业失败: {e}")
+        self._industry_cache[code] = ""
+        return ""
+
     def _build_context(self, stock_data: Dict[str, Any], df: Any) -> Dict[str, Any]:
         """
         构建分析上下文
@@ -401,9 +422,10 @@ class LLMAnalysisPlugin(Plugin):
         Returns:
             分析上下文
         """
+        code = stock_data["code"]
         context = {
-            "code": stock_data["code"],
-            "stock_name": stock_data.get("name", f"股票{stock_data['code']}"),
+            "code": code,
+            "stock_name": stock_data.get("name", f"股票{code}"),
             "today": {
                 "close": float(df['close'].iloc[-1]) if not df.empty else 0,
                 "open": float(df['open'].iloc[-1]) if not df.empty else 0,
@@ -411,7 +433,9 @@ class LLMAnalysisPlugin(Plugin):
                 "low": float(df['low'].iloc[-1]) if not df.empty else 0,
                 "volume": float(df['volume'].iloc[-1]) if not df.empty else 0,
                 "amount": float(df['amount'].iloc[-1]) if not df.empty else 0
-            }
+            },
+            # 所属行业（用于板块联动匹配）
+            "industry": self._get_stock_industry(code) if self.sector_results else "",
         }
         
         # 添加技术指标（来自技术分析插件）
