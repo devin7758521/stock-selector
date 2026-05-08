@@ -38,6 +38,25 @@ logger = logging.getLogger("stock_selector.run_strategy")
 RESULTS_FILE = os.path.join(os.path.dirname(__file__), "strategy_results.json")
 
 
+def _to_json_safe(obj):
+    """递归转换 numpy 类型为 Python 原生类型，确保 JSON 可序列化"""
+    if isinstance(obj, dict):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_json_safe(v) for v in obj]
+    try:
+        import numpy as np
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+    except ImportError:
+        pass
+    return obj
+
+
 def run(config_path: str = "config.yaml") -> dict:
     cfg = load_config(config_path)
 
@@ -116,7 +135,7 @@ def run(config_path: str = "config.yaml") -> dict:
     }
 
     with open(RESULTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+        json.dump(_to_json_safe(result), f, ensure_ascii=False, indent=2)
     logger.info(f"  策略结果已写入 {RESULTS_FILE}")
 
     # 飞书推送

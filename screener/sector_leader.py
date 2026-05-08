@@ -406,11 +406,11 @@ def _check_ma_position(df: pd.DataFrame) -> Dict:
     vol_shrinking = False
     pullback = False
     if len(vol) >= 5 and len(close) >= 5:
-        vol_3d = vol.iloc[-3:].mean()
-        vol_5d_prev = vol.iloc[-8:-3].mean()
+        vol_3d = float(vol.iloc[-3:].mean())
+        vol_5d_prev = float(vol.iloc[-8:-3].mean())
         if vol_5d_prev > 0:
-            vol_shrinking = vol_3d < vol_5d_prev * 0.90
-        pullback = close.iloc[-1] < close.iloc[-3]
+            vol_shrinking = bool(vol_3d < vol_5d_prev * 0.90)
+        pullback = bool(float(close.iloc[-1]) < float(close.iloc[-3]))
 
     consecutive_up = 0
     for i in range(len(close) - 1, 0, -1):
