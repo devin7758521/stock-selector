@@ -37,8 +37,9 @@ class LLMAnalysisPlugin(Plugin):
     5. 预留真正的LLM API接口
     """
     
-    # 行业缓存（类级别，避免重复请求）
-    _industry_cache: Dict[str, str] = {}
+    # 行业/板块映射缓存，由 selector 在批次处理前预填
+    # {stock_code: sector_name}，如 {"600519": "白酒"}
+    stock_sector_map: Dict[str, str] = {}
 
     def __init__(self, name: str, config: Dict[str, Any]):
         """
@@ -393,24 +394,6 @@ class LLMAnalysisPlugin(Plugin):
             logger.error(f"Top3深度分析失败: {e}")
             return None
 
-    def _get_stock_industry(self, code: str) -> str:
-        """获取股票所属行业，带缓存。失败返回空字符串。"""
-        if code in self._industry_cache:
-            return self._industry_cache[code]
-        try:
-            import akshare as ak
-            info = ak.stock_individual_info_em(symbol=code)
-            if info is not None and not info.empty:
-                row = info[info["item"] == "行业"]
-                if not row.empty:
-                    industry = str(row.iloc[0]["value"]).strip()
-                    self._industry_cache[code] = industry
-                    return industry
-        except Exception as e:
-            logger.debug(f"[industry] {code} 获取行业失败: {e}")
-        self._industry_cache[code] = ""
-        return ""
-
     def _build_context(self, stock_data: Dict[str, Any], df: Any) -> Dict[str, Any]:
         """
         构建分析上下文
@@ -435,7 +418,7 @@ class LLMAnalysisPlugin(Plugin):
                 "amount": float(df['amount'].iloc[-1]) if not df.empty else 0
             },
             # 所属行业（用于板块联动匹配）
-            "industry": self._get_stock_industry(code) if self.sector_results else "",
+            "industry": self.stock_sector_map.get(code, ""),
         }
         
         # 添加技术指标（来自技术分析插件）

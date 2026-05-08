@@ -186,6 +186,33 @@ class StockSelector:
                 if hasattr(plugin, "analyzer") and hasattr(plugin.analyzer, "sector_results"):
                     plugin.analyzer.sector_results = self.sector_results
                     logger.debug(f"板块数据已注入插件 {plugin.name}（{len(self.sector_results)} 个板块）")
+
+            # Step 3.6: 预建股票→板块映射（批量一次，避免逐股请求）
+            logger.info("Step 3.6: 预建股票→板块映射...")
+            stock_sector_map = {}
+            for s in self.sector_results:
+                s_code = s.get("code", "")
+                s_name = s.get("name", "")
+                if s_code and s_name:
+                    try:
+                        from screener.sector_leader import _fetch_sector_stocks_eastmoney
+                        stocks = _fetch_sector_stocks_eastmoney(s_code)
+                        for stk in stocks:
+                            sc = stk.get("code", "")
+                            if sc:
+                                stock_sector_map[sc] = s_name
+                        if stocks:
+                            logger.debug(f"  板块「{s_name}」({s_code}): {len(stocks)} 只成分股")
+                    except Exception as e:
+                        logger.debug(f"  板块「{s_name}」成分股获取失败: {e}")
+            if stock_sector_map:
+                logger.info(f"股票→板块映射建立完成，共 {len(stock_sector_map)} 只股票")
+                for plugin in self.plugin_manager.get_active_plugins():
+                    if hasattr(plugin, "stock_sector_map"):
+                        plugin.stock_sector_map = stock_sector_map
+                        logger.debug(f"板块映射已注入插件 {plugin.name}（{len(stock_sector_map)} 条）")
+            else:
+                logger.debug("股票→板块映射为空（可能板块无代码或API不可用）")
         else:
             logger.warning("板块筛选无结果")
         
