@@ -544,14 +544,14 @@ class EnhancedLLMAnalyzer:
         else:
             return f"综合评分{weighted_score:.1f}分，多维度信号偏弱，建议{operation_advice}。"
 
-    def _generate_risk_warning(self, policy_score: int,
-                              macro_score: int, market_score: int) -> str:
+    def _generate_risk_warning(self, policy_score: Optional[int],
+                              macro_score: Optional[int], market_score: Optional[int]) -> str:
         warnings = []
-        if policy_score < 40:
+        if policy_score is not None and policy_score < 40:
             warnings.append("政策面不利，存在政策风险")
-        if macro_score < 40:
+        if macro_score is not None and macro_score < 40:
             warnings.append("宏观环境不佳，存在系统性风险")
-        if market_score < 40:
+        if market_score is not None and market_score < 40:
             warnings.append("市场环境不佳，存在流动性风险")
         if not warnings:
             warnings.append("投资有风险，入市需谨慎")
