@@ -118,6 +118,14 @@ def run(config_path: str = "config.yaml") -> dict:
         pool_html_path = os.path.join(os.path.dirname(__file__), "stock_pool.html")
         with open(pool_html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
+
+        # 同时写入 Gist（随时可访问）
+        try:
+            from screener.sniper_store import write_gist_files
+            write_gist_files({"stock_pool.html": html_content}, description="Stock pool page")
+            logger.info(f"  stock_pool.html 已存入 Gist")
+        except Exception as gist_err:
+            logger.debug(f"  stock_pool.html 写入Gist失败: {gist_err}")
         logger.info(f"  stock_pool.html 已生成")
     except Exception as e:
         logger.warning(f"  滚动股票池更新失败: {e}")

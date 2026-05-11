@@ -113,6 +113,8 @@ jobs:
         env:
           TZ: Asia/Shanghai
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          GIST_PAT: ${{ secrets.GIST_PAT }}
+          GIST_ID: ${{ secrets.GIST_ID }}
         run: |
           python run_strategy.py
 
@@ -120,5 +122,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: strategy-results
-          path: strategy_results.json
-          retention-days: 1
+          path: |
+            strategy_results.json
+            stock_pool.html
+          retention-days: 7
+
+      - name: Upload stock pool HTML
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-pool-page
+          path: stock_pool.html
+          retention-days: 30
