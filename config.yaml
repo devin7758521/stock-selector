@@ -44,7 +44,7 @@ plugins:
   stock_list_analysis:
     enabled: true
   technical_analysis:
-    enabled: true
+    enabled: false
   fundamental_analysis:
     enabled: false
 

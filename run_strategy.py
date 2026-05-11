@@ -95,6 +95,33 @@ def run(config_path: str = "config.yaml") -> dict:
 
     logger.info(f"  共选出 {len(all_picks)} 只龙头股（{len(leading_sectors)} 个板块）")
 
+    # Step 3.5: 滚动股票池（每日 top3 → 10日窗口）
+    logger.info("Step 3.5: 滚动股票池...")
+    pool_top15 = []
+    try:
+        # 按信号 + 成交额排序取当日 top3
+        _signal_order = {"可介入": 0, "观望": 1, "回避": 2}
+        all_picks_sorted = sorted(
+            all_picks,
+            key=lambda x: (_signal_order.get(x.get("signal", ""), 9), -x.get("amount_yi", 0)),
+        )
+        top3_today = all_picks_sorted[:3]
+
+        from screener.sniper_store import save_stock_pool, get_pool_top_n
+        save_stock_pool(top3_today)
+        pool_top15 = get_pool_top_n(15)
+        logger.info(f"  池子返回 {len(pool_top15)} 只（当日 top3 已存入）")
+
+        # 生成静态 HTML
+        from screener.stock_pool_html import generate_pool_html
+        html_content = generate_pool_html(pool_top15)
+        pool_html_path = os.path.join(os.path.dirname(__file__), "stock_pool.html")
+        with open(pool_html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        logger.info(f"  stock_pool.html 已生成")
+    except Exception as e:
+        logger.warning(f"  滚动股票池更新失败: {e}")
+
     # ═══════════════════════════════════════════════════
     # Step 4: 仓位建议
     # ═══════════════════════════════════════════════════
@@ -139,7 +166,7 @@ def run(config_path: str = "config.yaml") -> dict:
 
     # 飞书推送
     try:
-        send_feishu_strategy(env, leading_sectors, position_advice, cfg)
+        send_feishu_strategy(env, leading_sectors, position_advice, cfg, pool=pool_top15)
     except Exception as e:
         logger.warning(f"飞书推送异常: {e}")
 

@@ -35,6 +35,10 @@ _GIST_API = "https://api.github.com/gists"
 _FILENAME = "watchlist_A.json"
 _RETAIN_DAYS = 7
 
+# 滚动股票池（10日窗口）
+_POOL_FILENAME = "stock_pool.json"
+_POOL_RETAIN_DAYS = 10
+
 
 def _headers() -> dict:
     pat = os.environ.get("GIST_PAT", "")
@@ -210,3 +214,122 @@ def format_sniper_tag(code: str, hits: Dict[str, Dict]) -> str:
     dates = hit.get("dates", [])
     dates_str = "/".join(dates[-3:]) if dates else ""
     return f"🎯7日内{count}次({dates_str})"
+
+
+# ═══════════════════════════════════════════════════════
+# 滚动股票池（10日窗口）
+# ═══════════════════════════════════════════════════════
+
+def read_gist_file(filename: str) -> Dict:
+    """读取 Gist 中指定文件，失败返回 {}。"""
+    gid = _gist_id()
+    if not gid:
+        return {}
+    try:
+        resp = requests.get(f"{_GIST_API}/{gid}", headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        content = resp.json().get("files", {}).get(filename, {}).get("content", "{}")
+        return json.loads(content) if content else {}
+    except Exception as e:
+        logger.debug(f"[pool] 读取 {filename} 失败: {e}")
+    return {}
+
+
+def write_gist_files(files: Dict[str, object], description: str = "") -> bool:
+    """一次 PATCH 写入多个文件到 Gist。"""
+    gid = _gist_id()
+    if not gid:
+        return False
+    try:
+        desc = description or f"stock-selector (updated {datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        payload = {
+            "description": desc,
+            "files": {name: {"content": json.dumps(data, ensure_ascii=False, indent=2)}
+                      for name, data in files.items()},
+        }
+        resp = requests.patch(f"{_GIST_API}/{gid}", json=payload, headers=_headers(), timeout=15)
+        resp.raise_for_status()
+        logger.debug(f"[pool] 写入 {list(files.keys())} 成功")
+        return True
+    except Exception as e:
+        logger.debug(f"[pool] 写入Gist失败: {e}")
+    return False
+
+
+def save_stock_pool(today_top3: List[Dict]) -> bool:
+    """
+    保存当日 top3 龙头到滚动池，保留 10 天数据。
+
+    Args:
+        today_top3: 当日 top 3 龙头股列表，每项需含 code/name/signal/price/amount_yi/gain_pct
+
+    Returns:
+        是否写入成功
+    """
+    if not today_top3:
+        return False
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    data = read_gist_file(_POOL_FILENAME)
+
+    # 当日去重（已有当日数据则覆盖）
+    today_items = {}
+    for r in today_top3:
+        code = r.get("code", "")
+        if not code:
+            continue
+        today_items[code] = {
+            "code": code,
+            "name": r.get("name", ""),
+            "signal": r.get("signal", ""),
+            "price": r.get("price", 0),
+            "amount_yi": r.get("amount_yi", 0),
+            "gain_pct": r.get("gain_pct", 0),
+            "signal_reason": r.get("signal_reason", ""),
+            "sector": r.get("sector", r.get("_sector_name", "")),
+        }
+
+    data[today] = list(today_items.values())
+
+    # 清理 10 天前数据
+    cutoff = (datetime.now() - timedelta(days=_POOL_RETAIN_DAYS)).strftime("%Y-%m-%d")
+    data = {k: v for k, v in data.items() if k >= cutoff}
+    logger.info(f"[pool] 保存当日 {len(today_items)} 只，池子共 {sum(len(v) for v in data.values())} 只（{len(data)} 天）")
+
+    return write_gist_files({_POOL_FILENAME: data})
+
+
+def get_pool_top_n(n: int = 15) -> List[Dict]:
+    """
+    读取滚动池，按信号优先级 + 成交额排序返回 top N。
+
+    Args:
+        n: 返回数量，默认 15
+
+    Returns:
+        [{code, name, signal, price, amount_yi, gain_pct, signal_reason, sector, date}, ...]
+    """
+    data = read_gist_file(_POOL_FILENAME)
+    if not data:
+        return []
+
+    # 展平所有天，按 code 去重（保留最新一天的数据）
+    seen: Dict[str, Dict] = {}
+    date_keys = sorted(data.keys(), reverse=True)  # 最新日期优先
+    for date_str in date_keys:
+        for item in data[date_str]:
+            code = item.get("code", "")
+            if not code or code in seen:
+                continue
+            item["date"] = date_str
+            seen[code] = item
+
+    pool = list(seen.values())
+
+    # 排序：可介入 > 观望 > 回避 > 其他，同信号按成交额降序
+    signal_order = {"可介入": 0, "观望": 1, "回避": 2}
+    pool.sort(key=lambda x: (signal_order.get(x.get("signal", ""), 9), -x.get("amount_yi", 0)))
+
+    top = pool[:n]
+    logger.info(f"[pool] 池子共 {len(pool)} 只（去重），返回 top {len(top)}")
+    return top

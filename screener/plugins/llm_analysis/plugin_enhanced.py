@@ -162,16 +162,9 @@ class LLMAnalysisPlugin(Plugin):
             # AI 分析插件已移除，传 None 给增强分析器
             ai_analysis = None
 
-            # 若配置顺序有误或技术插件失败，用 K 线就地补算一层（与技术分析插件一致）
-            technical_analysis = stock_data.get("technical_analysis")
-            if not technical_analysis and df is not None and not getattr(df, "empty", True):
-                from screener.plugins.technical_analysis.plugin import TechnicalAnalysisPlugin
-
-                _ta_patch = TechnicalAnalysisPlugin("_inline_", {}).process(
-                    stock_data, df, config
-                )
-                if _ta_patch and _ta_patch.get("technical_analysis"):
-                    technical_analysis = _ta_patch["technical_analysis"]
+            # 技术分析插件已禁用，传 None（_build_context 已备MA均线信息，
+            # _calculate_tech_resonance_score 默认 RSI=50，TechnicalAnalyzer 处理 None）
+            technical_analysis = None
 
             # 执行增强版LLM分析（传入 stock_data 供硬数据评分使用）
             result = self.analyzer.analyze(

@@ -8,7 +8,7 @@
 
 import logging
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -42,6 +42,7 @@ def send_feishu_strategy(
     leading_sectors: List[Dict],
     position_advice: Dict,
     cfg: dict,
+    pool: Optional[List[Dict]] = None,
 ) -> bool:
     """
     发送策略分析结果到飞书
@@ -51,6 +52,7 @@ def send_feishu_strategy(
         leading_sectors: identify_leading_sectors() 的输出
         position_advice: 仓位建议 dict
         cfg: 完整 config
+        pool: 滚动股票池（10日窗口 top15）
 
     Returns:
         是否推送成功
@@ -132,6 +134,20 @@ def send_feishu_strategy(
             lines.append("      （无符合条件的龙头股）")
         lines.append("")
     lines.append("")
+
+    # ── 2.5、滚动股票池 ────────────────────────────
+    if pool:
+        lines.append(f"{'─' * 32}")
+        lines.append(f"2.5、滚动股票池 Top{len(pool)}（10日窗口）")
+        lines.append(f"{'─' * 32}")
+        for i, p in enumerate(pool, 1):
+            signal = p.get("signal", "—")
+            sig_emoji = "🟢" if signal == "可介入" else "🟡" if signal == "观望" else "🔴"
+            lines.append(
+                f"  {i}. {sig_emoji} {p['name']}({p['code']}) "
+                f"¥{p.get('price', 0)} ({p.get('amount_yi', 0)}亿) {signal}"
+            )
+        lines.append("")
 
     # ── 三、仓位建议 ────────────────────────────
     lines.append(f"{'─' * 32}")
