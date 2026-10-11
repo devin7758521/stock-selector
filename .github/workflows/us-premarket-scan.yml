@@ -1,0 +1,39 @@
+name: US Pre-market Scanner
+
+on:
+  schedule:
+    # 8:30 AM New York time on weekdays (about 60 minutes before the 9:30 AM regular session).
+    # Timezone-aware scheduling follows US daylight saving time automatically.
+    - cron: "30 8 * * 1-5"
+      timezone: "America/New_York"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: us-premarket-scan
+  cancel-in-progress: false
+
+jobs:
+  scan-us-stocks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout latest repository code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install scanner dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas yfinance pandas-market-calendars requests
+      - name: Run pre-market scan
+        env:
+          TZ: America/New_York
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: python scripts/us_premarket_scan.py
