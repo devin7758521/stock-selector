@@ -26,7 +26,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Compile Python
-        run: python -m compileall -q screener main.py run_ui.py
+        run: |
+          python -m compileall -q screener main.py run_ui.py
+          python -m py_compile scripts/us_premarket_scan.py
 
       - name: Import smoke test
         run: |
