@@ -1,0 +1,1459 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © aibitcointrend
+// © kv4coins
+// MACD Leader logic based on LazyBear
+
+//@version=6
+
+indicator("Adaptive RSI + Volume Profile + MTF MACD + MACD Leader [V2]", overlay=false, max_lines_count=500, max_polylines_count=100, precision=1)
+
+//=====================================================================================================================
+// ADAPTIVE RSI
+//=====================================================================================================================
+
+rsiLength = input.int(14, minval=1, title="RSI Length", group="Adaptive RSI (Gaussian Weighted)")
+sigma = input.float(3.0, minval=0.01, title="Gaussian Sigma", group="Adaptive RSI (Gaussian Weighted)")
+enableMA = input.bool(true, title="Signal Line", group="Signal Line")
+signallength = input.int(9, minval=1, title="Signal Length", group="Signal Line")
+calculateDivergence = input.bool(false, title="Real-Time Divergence", group="Real-Time Divergence")
+lookbackLeft = input.int(20, minval=1, title="Lookback", group="Real-Time Divergence")
+bearColor = input.color(color.red, "Bearish Color", group="Real-Time Divergence")
+bullColor = input.color(color.green, "Bullish Color", group="Real-Time Divergence")
+textColor = input.color(color.white, "Text Color", group="Real-Time Divergence")
+noneColor = color.new(color.white, 100)
+
+float weightedGain = 0.0
+float weightedLoss = 0.0
+float totalWeight = 0.0
+
+for i = 1 to rsiLength
+    weight = math.exp(-math.pow(i - (rsiLength / 2), 2) / (2 * math.pow(sigma, 2)))
+    totalWeight += weight
+    delta = close[i - 1] - close[i]
+    gain = delta > 0 ? delta : 0.0
+    loss = delta < 0 ? -delta : 0.0
+    weightedGain += gain * weight
+    weightedLoss += loss * weight
+
+avgGain = weightedGain / totalWeight
+avgLoss = weightedLoss / totalWeight
+
+rs = avgLoss == 0 ? 0 : avgGain / avgLoss
+rsiAdaptive = avgLoss == 0 ? 100 : 100 - (100 / (1 + rs))
+smoothingRSI = ta.sma(rsiAdaptive, signallength)
+
+rsiPlot = plot(rsiAdaptive, "Adaptive RSI", color=color.blue)
+
+plot(
+     smoothingRSI,
+     "RSI-based MA",
+     color=color.yellow,
+     display=enableMA ? display.all : display.none,
+     editable=enableMA
+     )
+
+rsiUpperBand = hline(70, "Overbought", color=color.red)
+rsiLowerBand = hline(30, "Oversold", color=color.green)
+midLinePlot = plot(50, color=chart.fg_color)
+
+fill(
+     rsiUpperBand,
+     rsiLowerBand,
+     color=color.rgb(126, 87, 194, 90),
+     title="RSI Background Fill"
+     )
+
+fill(
+     rsiPlot,
+     midLinePlot,
+     100,
+     60,
+     top_color=color.new(color.green, 0),
+     bottom_color=color.new(color.green, 100),
+     title="Overbought Gradient Fill"
+     )
+
+fill(
+     rsiPlot,
+     midLinePlot,
+     40,
+     0,
+     top_color=color.new(color.red, 100),
+     bottom_color=color.new(color.red, 0),
+     title="Oversold Gradient Fill"
+     )
+
+p1 = plot(rsiAdaptive, color=color.blue, display=display.none, editable=false)
+p2 = plot(rsiAdaptive[4], display=display.none, editable=false)
+
+fill(
+     p1,
+     p2,
+     rsiAdaptive,
+     rsiAdaptive[4],
+     color.blue,
+     na
+     )
+
+//=====================================================================================================================
+// DIVERGENCE
+//=====================================================================================================================
+
+var bool plFound = false
+var bool phFound = false
+var bool bullCond = false
+var bool bearCond = false
+
+if calculateDivergence
+    plFound := not na(ta.pivotlow(rsiAdaptive, lookbackLeft, 0))
+    rsiHL = rsiAdaptive > ta.valuewhen(plFound, rsiAdaptive, 1)
+    priceLL = low < ta.valuewhen(plFound, low, 1)
+    bullCond := priceLL and rsiHL and plFound
+
+    phFound := not na(ta.pivothigh(rsiAdaptive, lookbackLeft, 0))
+    rsiLH = rsiAdaptive < ta.valuewhen(phFound, rsiAdaptive, 1)
+    priceHH = high > ta.valuewhen(phFound, high, 1)
+    bearCond := priceHH and rsiLH and phFound
+
+plot(
+     plFound ? rsiAdaptive : na,
+     title="Bullish Pivot",
+     linewidth=2,
+     color=(bullCond ? bullColor : noneColor)
+     )
+
+plotshape(
+     bullCond ? rsiAdaptive : na,
+     title="Bullish Divergence Label",
+     text=" Bull ",
+     style=shape.labelup,
+     location=location.absolute,
+     color=bullColor,
+     textcolor=textColor
+     )
+
+plot(
+     phFound ? rsiAdaptive : na,
+     title="Bearish Pivot",
+     linewidth=2,
+     color=(bearCond ? bearColor : noneColor)
+     )
+
+plotshape(
+     bearCond ? rsiAdaptive : na,
+     title="Bearish Divergence Label",
+     text=" Bear ",
+     style=shape.labeldown,
+     location=location.absolute,
+     color=bearColor,
+     textcolor=textColor
+     )
+
+alertcondition(
+     bullCond,
+     title="Real-time Bullish Divergence",
+     message="New Real-time Bullish Divergence detected."
+     )
+
+alertcondition(
+     bearCond,
+     title="Real-time Bearish Divergence",
+     message="New Real-time Bearish Divergence detected."
+     )
+
+//=====================================================================================================================
+// TRAILING STOP
+//=====================================================================================================================
+
+sig = input.bool(
+     true,
+     title="Crosses Signals",
+     group="Bullish/Bearish Signals"
+     )
+
+butri = input.int(
+     20,
+     minval=1,
+     maxval=99,
+     title="Trigger Bull when ta.crossover(rsi,value)",
+     group="Bullish/Bearish Signals"
+     )
+
+betri = input.int(
+     80,
+     minval=1,
+     maxval=99,
+     title="Trigger Bear when ta.crossunder(rsi,value)",
+     group="Bullish/Bearish Signals"
+     )
+
+trEn = input.bool(
+     true,
+     title="Crosses Trailing Stop",
+     group="Trailing Stop",
+     tooltip="Enable or disable the breakout trailing stop feature. When enabled, trailing stops are calculated based on ATR."
+     )
+
+m = input.float(
+     3,
+     minval=0.1,
+     step=0.1,
+     title="Trailing Multiplier",
+     group="Trailing Stop",
+     tooltip="ATR multiplier for calculating the trailing stop. Higher values result in wider stops, reducing the chance of premature exit."
+     )
+
+lw = input.int(
+     1,
+     minval=1,
+     title="Trailing Line Width",
+     group="Trailing Stop",
+     tooltip="Width of the trailing stop line displayed on the chart."
+     )
+
+posClr = input.color(
+     color.rgb(119, 255, 0),
+     title="",
+     group="Trailing Stop",
+     inline="Style"
+     )
+
+negClr = input.color(
+     color.rgb(255, 0, 13),
+     title="",
+     group="Trailing Stop",
+     inline="Style"
+     )
+
+atr = ta.atr(100)
+
+//=====================================================================================================================
+// TRAILING STOP FUNCTIONS
+//=====================================================================================================================
+
+f_updateBull(bullTrig, bullAct, preStop, ts, pts, cross, col, lw) =>
+    var float newTS = ts
+    var bool newActive = bullAct
+    var bool actPlot = false
+
+    if bullTrig or bullAct
+        if bullTrig
+            array.unshift(pts, chart.point.from_index(bar_index, preStop))
+            newTS := preStop
+            newActive := true
+        else
+            array.unshift(
+                 pts,
+                 chart.point.from_index(
+                     bar_index,
+                     math.max(preStop, newTS)
+                     )
+                 )
+            newTS := math.max(preStop, newTS)
+            actPlot := true
+
+        if cross
+            newActive := false
+            newTS := float(na)
+
+            polyline.new(
+                 pts,
+                 line_color=col,
+                 line_width=lw,
+                 force_overlay=true
+                 )
+
+            array.clear(pts)
+
+    [newTS, newActive, actPlot]
+
+f_updateBear(bearTrig, bearAct, preStop, ts, pts, cross, col, lw) =>
+    var float newTS = ts
+    var bool newActive = bearAct
+    var bool actPlot = false
+
+    if bearTrig or bearAct
+        if bearTrig
+            array.unshift(pts, chart.point.from_index(bar_index, preStop))
+            newTS := preStop
+            newActive := true
+        else
+            array.unshift(
+                 pts,
+                 chart.point.from_index(
+                     bar_index,
+                     math.min(preStop, newTS)
+                     )
+                 )
+            newTS := math.min(preStop, newTS)
+            actPlot := true
+
+        if cross
+            newActive := false
+            newTS := float(na)
+
+            polyline.new(
+                 pts,
+                 line_color=col,
+                 line_width=lw,
+                 force_overlay=true
+                 )
+
+            array.clear(pts)
+
+    [newTS, newActive, actPlot]
+
+//=====================================================================================================================
+// TRAILING STOP VARIABLES
+//=====================================================================================================================
+
+var ptsBull = array.new<chart.point>()
+var ptsBear = array.new<chart.point>()
+
+var polyline pBull = na
+var polyline pBear = na
+
+var bullPos = false
+var bearPos = false
+
+var tsBull = float(na)
+var tsBear = float(na)
+
+bool bullAct = false
+bool bearAct = false
+
+bool isB = ta.crossover(rsiAdaptive, butri)
+bool isBr = ta.crossunder(rsiAdaptive, betri)
+
+float preBullStop = low - atr * m
+float preBearStop = high + atr * m
+
+bool crossBull = ta.crossunder(low, tsBull)
+bool crossBear = ta.crossover(high, tsBear)
+
+bool bullT = isB and not isB[1] and trEn
+bool bearT = isBr and not isBr[1] and trEn
+
+//=====================================================================================================================
+// BULLISH TRAILING STOP
+//=====================================================================================================================
+
+[newTSBull, newBullPos, newBullAct] =
+     f_updateBull(
+         bullT,
+         bullPos,
+         preBullStop,
+         tsBull,
+         ptsBull,
+         crossBull,
+         posClr,
+         lw
+         )
+
+tsBull := newTSBull
+bullPos := newBullPos
+bullAct := newBullAct
+
+if not na(pBull)
+    polyline.delete(pBull)
+
+if ptsBull.size() > 0
+    pBull := polyline.new(
+         ptsBull,
+         false,
+         false,
+         line_color=posClr,
+         line_width=lw,
+         force_overlay=true
+         )
+
+//=====================================================================================================================
+// BEARISH TRAILING STOP
+//=====================================================================================================================
+
+[newTSBear, newBearPos, newBearAct] =
+     f_updateBear(
+         bearT,
+         bearPos,
+         preBearStop,
+         tsBear,
+         ptsBear,
+         crossBear,
+         negClr,
+         lw
+         )
+
+tsBear := newTSBear
+bearPos := newBearPos
+bearAct := newBearAct
+
+if not na(pBear)
+    polyline.delete(pBear)
+
+if ptsBear.size() > 0
+    pBear := polyline.new(
+         ptsBear,
+         false,
+         false,
+         line_color=negClr,
+         line_width=lw,
+         force_overlay=true
+         )
+
+//=====================================================================================================================
+// TRAILING STOP SIGNALS
+//=====================================================================================================================
+
+plotshape(
+     bullT and sig ? low - atr * m : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=posClr,
+     size=size.tiny,
+     title="Bullish Trailing Starts",
+     force_overlay=true
+     )
+
+plotshape(
+     bullT and newBullPos[1] == false and sig ? low - atr * m : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=color.new(posClr, 50),
+     size=size.small,
+     title="Bullish Trailing Confirmation",
+     force_overlay=true
+     )
+
+plotshape(
+     bearT and sig ? high + atr * m : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=negClr,
+     size=size.tiny,
+     title="Bearish Trailing Starts",
+     force_overlay=true
+     )
+
+plotshape(
+     bearT and newBearPos[1] == false and sig ? high + atr * m : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=color.new(negClr, 50),
+     size=size.small,
+     title="Bearish Trailing Confirmation",
+     force_overlay=true
+     )
+
+plotshape(
+     bullT and sig ? rsiAdaptive : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=posClr,
+     size=size.tiny,
+     title="Bullish RSI Signal"
+     )
+
+plotshape(
+     bullT and newBullPos[1] == false and sig ? rsiAdaptive : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=color.new(posClr, 50),
+     size=size.small,
+     title="Bullish RSI Confirmation"
+     )
+
+plotshape(
+     bearT and sig ? rsiAdaptive : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=negClr,
+     size=size.tiny,
+     title="Bearish RSI Signal"
+     )
+
+plotshape(
+     bearT and newBearPos[1] == false and sig ? rsiAdaptive : na,
+     location=location.absolute,
+     style=shape.circle,
+     color=color.new(negClr, 50),
+     size=size.small,
+     title="Bearish RSI Confirmation"
+     )
+
+//=====================================================================================================================
+// EMA 9 + EMA 20 + VWAP
+//=====================================================================================================================
+
+emaGroup = "Main Chart Trend Lines"
+
+showEMA9 = input.bool(true, title="Show EMA 9", group=emaGroup)
+ema9Length = input.int(9, minval=1, title="EMA 9 Length", group=emaGroup)
+ema9Color = input.color(color.yellow, title="EMA 9 Color", group=emaGroup)
+ema9Width = input.int(2, minval=1, maxval=5, title="EMA 9 Width", group=emaGroup)
+
+showEMA20 = input.bool(true, title="Show EMA 20", group=emaGroup)
+ema20Length = input.int(20, minval=1, title="EMA 20 Length", group=emaGroup)
+ema20Color = input.color(color.orange, title="EMA 20 Color", group=emaGroup)
+ema20Width = input.int(2, minval=1, maxval=5, title="EMA 20 Width", group=emaGroup)
+
+showVWAP = input.bool(true, title="Show VWAP", group=emaGroup)
+vwapColor = input.color(color.aqua, title="VWAP Color", group=emaGroup)
+vwapWidth = input.int(2, minval=1, maxval=5, title="VWAP Width", group=emaGroup)
+
+ema9 = ta.ema(close, ema9Length)
+ema20 = ta.ema(close, ema20Length)
+vwapValue = ta.vwap(hlc3)
+
+plot(
+     showEMA9 ? ema9 : na,
+     title="EMA 9",
+     color=ema9Color,
+     linewidth=ema9Width,
+     force_overlay=true
+     )
+
+plot(
+     showEMA20 ? ema20 : na,
+     title="EMA 20",
+     color=ema20Color,
+     linewidth=ema20Width,
+     force_overlay=true
+     )
+
+plot(
+     showVWAP ? vwapValue : na,
+     title="VWAP",
+     color=vwapColor,
+     linewidth=vwapWidth,
+     force_overlay=true
+     )
+
+//=====================================================================================================================
+// VOLUME PROFILE
+//=====================================================================================================================
+
+vp_use_visible_range = input.bool(false, title="Use Visible Range", group="Lookback Period")
+vp_lookback_depth = input.int(200, minval=10, maxval=3000, title="Fixed Range Lookback Depth [10-3000]", group="Lookback Period")
+
+vp_num_bars = input.int(200, minval=10, maxval=490, title="Number of Volume Bars [10-490]", group="Volume Bars")
+vp_bar_thickness = input.int(1, minval=1, maxval=30, title="Volume Bar Thickness [1-30]", group="Volume Bars")
+vp_bar_len_mult = input.int(20, minval=1, maxval=50, title="Bar Length Multiplier [1-50]", group="Volume Bars")
+vp_right_offset = input.int(70, minval=0, maxval=400, title="Right Offset [0-400]", group="Volume Bars")
+
+vp_volume_type = input.string(
+     "Both",
+     title="Volume Type",
+     options=["Both", "Bullish", "Bearish"],
+     group="Volume Bars"
+     )
+
+vp_bar_color = input.color(
+     color.new(color.gray, 50),
+     title="Volume Bar Color",
+     group="Volume Bars"
+     )
+
+vp_display_poc = input.bool(
+     true,
+     title="Display Point of Control (PoC)",
+     group="Point of Control"
+     )
+
+vp_poc_line_thickness = input.int(
+     1,
+     minval=1,
+     maxval=30,
+     title="PoC Line Thickness [1-30]",
+     group="Point of Control"
+     )
+
+vp_poc_line_color = input.color(
+     color.red,
+     title="PoC Line Color",
+     group="Point of Control"
+     )
+
+vp_display_va = input.bool(
+     true,
+     title="Display Value Area",
+     group="Value Area"
+     )
+
+vp_va_percent = input.int(
+     68,
+     minval=5,
+     maxval=95,
+     title="Value Area Percentage(%) [5-95]",
+     group="Value Area"
+     )
+
+vp_va_bar_color = input.color(
+     color.blue,
+     title="Value Area Bar Color",
+     group="Value Area"
+     )
+
+vp_display_va_lines = input.bool(
+     true,
+     title="Display Value Area Lines",
+     group="Value Area"
+     )
+
+vp_va_lines_thickness = input.int(
+     1,
+     minval=1,
+     maxval=20,
+     title="Value Area Lines Thickness [1-20]",
+     group="Value Area"
+     )
+
+var int timeframe_minutes = 1000 * timeframe.in_seconds()
+
+var int lookback_bars =
+     vp_use_visible_range ?
+     math.round(
+         (last_bar_time - chart.left_visible_bar_time) /
+         timeframe_minutes
+         ) :
+     vp_lookback_depth
+
+var line poc = na
+var line vah = na
+var line val = na
+
+var array<line> bars = array.new_line()
+
+var array<float> volumes =
+     array.new_float(vp_num_bars, 0)
+
+float highest_price = ta.highest(lookback_bars)
+float lowest_price = ta.lowest(lookback_bars)
+
+float price_interval =
+     (highest_price - lowest_price) /
+     (vp_num_bars - 1)
+
+scale_volume(vol, max) =>
+    float d =
+         max /
+         lookback_bars /
+         (vp_bar_len_mult / 100)
+
+    int scaled_vol =
+         math.round(vol / d)
+
+    scaled_vol
+
+calculate_vp() =>
+    array.fill(volumes, 0)
+
+    for i = 0 to (lookback_bars - 1)
+        for j = 0 to (vp_num_bars - 1)
+
+            float price_level =
+                 lowest_price +
+                 price_interval * j
+
+            bool is_bullish =
+                 close[i] >= open[i]
+
+            bool include_vol =
+                 vp_volume_type == "Both" ?
+                 true :
+                 (
+                     vp_volume_type == "Bullish" ?
+                     is_bullish :
+                     not is_bullish
+                 )
+
+            if (
+                 price_level >= low[i] and
+                 price_level < high[i] and
+                 include_vol
+                 )
+
+                array.set(
+                     volumes,
+                     j,
+                     volumes.get(j) + volume[i]
+                     )
+
+calculate_va(int max_idx, float max_vol) =>
+    float sum_vol = volumes.sum()
+    float va_vol = sum_vol * vp_va_percent / 100
+
+    int va_up = max_idx
+    int va_dn = max_idx
+
+    float va_sum = max_vol
+
+    while va_sum < va_vol
+
+        float v_up =
+             va_up < vp_num_bars - 1 ?
+             volumes.get(va_up + 1) :
+             0.0
+
+        float v_dn =
+             va_dn > 0 ?
+             volumes.get(va_dn - 1) :
+             0.0
+
+        if v_up == 0 and v_dn == 0
+            break
+
+        if v_up >= v_dn
+            va_sum += v_up
+            va_up += 1
+        else
+            va_sum += v_dn
+            va_dn -= 1
+
+    [va_dn, va_up]
+
+draw() =>
+    float max_vol = volumes.max()
+    int max_idx = volumes.indexof(max_vol)
+
+    int x2 =
+         bar_index +
+         vp_right_offset
+
+    for i = 0 to (vp_num_bars - 1)
+
+        int vol =
+             scale_volume(
+                 volumes.get(i),
+                 max_vol
+                 )
+
+        int x1 = x2 - vol
+
+        float y =
+             lowest_price +
+             price_interval * i
+
+        line.set_xy1(bars.get(i), x1, y)
+        line.set_xy2(bars.get(i), x2, y)
+
+        line.set_color(
+             bars.get(i),
+             max_idx == i ?
+             vp_poc_line_color :
+             vp_bar_color
+             )
+
+    if vp_display_poc
+
+        int vol =
+             scale_volume(
+                 max_vol,
+                 max_vol
+                 )
+
+        int poc_x1 =
+             bar_index -
+             lookback_bars
+
+        int poc_x2 =
+             x2 -
+             vol -
+             10
+
+        float y =
+             lowest_price +
+             price_interval * max_idx
+
+        line.set_xy1(poc, poc_x1, y)
+        line.set_xy2(poc, poc_x2, y)
+
+    if vp_display_va
+
+        [va_dn, va_up] =
+             calculate_va(
+                 max_idx,
+                 max_vol
+                 )
+
+        for i = va_dn to va_up
+
+            if i != max_idx
+                line.set_color(
+                     bars.get(i),
+                     vp_va_bar_color
+                     )
+
+        if vp_display_va_lines
+
+            int vah_vol =
+                 scale_volume(
+                     volumes.get(va_up),
+                     max_vol
+                     )
+
+            int val_vol =
+                 scale_volume(
+                     volumes.get(va_dn),
+                     max_vol
+                     )
+
+            int va_x1 =
+                 bar_index -
+                 lookback_bars
+
+            int vah_x2 =
+                 x2 -
+                 vah_vol -
+                 10
+
+            int val_x2 =
+                 x2 -
+                 val_vol -
+                 10
+
+            float vah_y1 =
+                 lowest_price +
+                 price_interval * va_up
+
+            float val_y1 =
+                 lowest_price +
+                 price_interval * va_dn
+
+            line.set_xy1(vah, va_x1, vah_y1)
+            line.set_xy1(val, va_x1, val_y1)
+
+            line.set_xy2(vah, vah_x2, vah_y1)
+            line.set_xy2(val, val_x2, val_y1)
+
+if barstate.isfirst
+
+    for i = 0 to (vp_num_bars - 1)
+
+        array.push(
+             bars,
+             line.new(
+                 x1=bar_index,
+                 y1=close,
+                 x2=bar_index,
+                 y2=close,
+                 width=vp_bar_thickness,
+                 force_overlay=true
+                 )
+             )
+
+    if vp_display_poc
+
+        poc := line.new(
+             x1=bar_index,
+             y1=close,
+             x2=bar_index,
+             y2=close,
+             color=vp_poc_line_color,
+             width=vp_poc_line_thickness,
+             force_overlay=true
+             )
+
+    if vp_display_va and vp_display_va_lines
+
+        vah := line.new(
+             x1=bar_index,
+             y1=close,
+             x2=bar_index,
+             y2=close,
+             color=vp_va_bar_color,
+             width=vp_va_lines_thickness,
+             force_overlay=true
+             )
+
+        val := line.new(
+             x1=bar_index,
+             y1=close,
+             x2=bar_index,
+             y2=close,
+             color=vp_va_bar_color,
+             width=vp_va_lines_thickness,
+             force_overlay=true
+             )
+
+if barstate.islast
+    calculate_vp()
+    draw()
+
+//=====================================================================================================================
+// MTF MACD
+//=====================================================================================================================
+
+macdFast = 12
+macdSlow = 26
+macdSignal = 9
+
+f_macd_state() =>
+
+    float fastMA = ta.ema(close, macdFast)
+    float slowMA = ta.ema(close, macdSlow)
+
+    float dif = fastMA - slowMA
+    float dea = ta.ema(dif, macdSignal)
+
+    bool goldenCross = ta.crossover(dif, dea)
+    bool deathCross = ta.crossunder(dif, dea)
+
+    [dif, dea, goldenCross, deathCross]
+
+[macd10, signal10, golden10, death10] =
+     request.security(
+         syminfo.tickerid,
+         "10",
+         f_macd_state(),
+         lookahead=barmerge.lookahead_off
+         )
+
+[macd15, signal15, golden15, death15] =
+     request.security(
+         syminfo.tickerid,
+         "15",
+         f_macd_state(),
+         lookahead=barmerge.lookahead_off
+         )
+
+[macd30, signal30, golden30, death30] =
+     request.security(
+         syminfo.tickerid,
+         "30",
+         f_macd_state(),
+         lookahead=barmerge.lookahead_off
+         )
+
+bull10 = macd10 > signal10
+bull15 = macd15 > signal15
+bull30 = macd30 > signal30
+
+hist10 = macd10 - signal10
+hist15 = macd15 - signal15
+hist30 = macd30 - signal30
+
+hist10Weak = hist10 < hist10[1] and hist10 > 0
+hist15Weak = hist15 < hist15[1] and hist15 > 0
+hist30Weak = hist30 < hist30[1] and hist30 > 0
+
+//=====================================================================================================================
+// MACD LEADER [LazyBear]
+//=====================================================================================================================
+
+leaderGroup = "MACD Leader [LazyBear]"
+
+showMACDLeader = input.bool(
+     true,
+     title="Show MACD Leader",
+     group=leaderGroup
+     )
+
+leaderFastLength = input.int(
+     12,
+     minval=1,
+     title="Fast Length",
+     group=leaderGroup
+     )
+
+leaderLongLength = input.int(
+     26,
+     minval=1,
+     title="Slow Length",
+     group=leaderGroup
+     )
+
+leaderSigLength = input.int(
+     9,
+     minval=1,
+     title="Signal Length",
+     group=leaderGroup
+     )
+
+showLeaderMACD = input.bool(
+     false,
+     title="Show Standard MACD",
+     group=leaderGroup
+     )
+
+showLeaderSignal = input.bool(
+     false,
+     title="Show Signal",
+     group=leaderGroup
+     )
+
+leaderBullColor = input.color(
+     color.lime,
+     title="Positive Color",
+     group=leaderGroup
+     )
+
+leaderBearColor = input.color(
+     color.red,
+     title="Negative Color",
+     group=leaderGroup
+     )
+
+leaderMACDColor = input.color(
+     color.green,
+     title="MACD Color",
+     group=leaderGroup
+     )
+
+leaderSignalColor = input.color(
+     color.red,
+     title="Signal Color",
+     group=leaderGroup
+     )
+
+leaderSrc = close
+
+leaderSema = ta.ema(
+     leaderSrc,
+     leaderFastLength
+     )
+
+leaderLema = ta.ema(
+     leaderSrc,
+     leaderLongLength
+     )
+
+leaderI1 =
+     leaderSema +
+     ta.ema(
+         leaderSrc - leaderSema,
+         leaderFastLength
+         )
+
+leaderI2 =
+     leaderLema +
+     ta.ema(
+         leaderSrc - leaderLema,
+         leaderLongLength
+         )
+
+macdLeader =
+     leaderI1 - leaderI2
+
+leaderMACD =
+     leaderSema - leaderLema
+
+leaderSignal =
+     ta.sma(
+         leaderMACD,
+         leaderSigLength
+         )
+
+leaderColor =
+     macdLeader >= 0 ?
+     leaderBullColor :
+     leaderBearColor
+
+//=====================================================================================================================
+// MACD LEADER VISUAL DISPLAY
+//=====================================================================================================================
+//
+// 注意：这里没有修改 macdLeader 本身。
+// 下面的 visualLeader 只是为了在 RSI 同一个副图中给 Leader 腾出独立
+// 的视觉区域，让它不会被 0~100 的 RSI 压扁。
+//
+// Leader 原始值仍然保存在 macdLeader 中。
+// 表格也继续显示 macdLeader 的真实值。
+//=====================================================================================================================
+
+leaderDisplayLookback = input.int(
+     100,
+     minval=20,
+     maxval=500,
+     title="Visual Scale Lookback",
+     group=leaderGroup,
+     tooltip="仅控制 MACD Leader 在同一副图中的视觉高度，不改变 Leader 原始计算值。"
+     )
+
+leaderDisplayHeight = input.float(
+     18.0,
+     minval=5.0,
+     maxval=30.0,
+     step=1.0,
+     title="Visual Height",
+     group=leaderGroup,
+     tooltip="仅控制 MACD Leader 显示高度。数值越大，Leader 曲线越明显。"
+     )
+
+leaderDisplayCenter = 12.0
+
+leaderMaxAbs = ta.highest(
+     math.abs(macdLeader),
+     leaderDisplayLookback
+     )
+
+leaderSafeScale =
+     na(leaderMaxAbs) or leaderMaxAbs == 0 ?
+     1.0 :
+     leaderMaxAbs
+
+visualLeader =
+     leaderDisplayCenter +
+     (macdLeader / leaderSafeScale) * (leaderDisplayHeight / 2.0)
+
+visualLeaderZero = leaderDisplayCenter
+
+// Leader 独立视觉零轴
+hline(
+     12,
+     title="MACD Leader Zero",
+     color=color.new(color.gray, 60),
+     linestyle=hline.style_dotted
+     )
+
+// Leader 视觉上放在 RSI 下方
+plot(
+     showMACDLeader ? visualLeader : na,
+     title="MACD Leader",
+     color=leaderColor,
+     linewidth=2
+     )
+
+// 以下两个保持原来的真实 MACD Leader 数值。
+// 默认关闭，不影响当前显示。
+plot(
+     showLeaderMACD ? leaderMACD : na,
+     title="MACD Leader MACD",
+     color=leaderMACDColor,
+     linewidth=1
+     )
+
+plot(
+     showLeaderSignal ? leaderSignal : na,
+     title="MACD Leader Signal",
+     color=leaderSignalColor,
+     linewidth=1
+     )
+
+//=====================================================================================================================
+// TOP RISK
+//=====================================================================================================================
+
+int riskScore = 0
+
+riskScore +=
+     rsiAdaptive >= 80 ?
+     15 :
+     rsiAdaptive >= 70 ?
+     10 :
+     rsiAdaptive >= 65 ?
+     5 :
+     0
+
+riskScore += bearCond ? 25 : 0
+
+riskScore += not bull10 ? 5 : 0
+riskScore += not bull15 ? 7 : 0
+riskScore += not bull30 ? 8 : 0
+
+riskScore += hist10Weak ? 5 : 0
+riskScore += hist15Weak ? 5 : 0
+riskScore += hist30Weak ? 5 : 0
+
+riskScore += death10 ? 8 : 0
+riskScore += death15 ? 10 : 0
+riskScore += death30 ? 12 : 0
+
+riskScore +=
+     (bullPos[1] and crossBull) ?
+     15 :
+     0
+
+riskScore +=
+     (rsiAdaptive > 70 and hist15Weak) ?
+     5 :
+     0
+
+riskScore := math.min(riskScore, 100)
+
+string riskLevel =
+     riskScore >= 70 ?
+     "极高风险" :
+     riskScore >= 50 ?
+     "高风险" :
+     riskScore >= 30 ?
+     "注意" :
+     "低风险"
+
+//=====================================================================================================================
+// MACD TABLE
+//=====================================================================================================================
+//
+// 保留：DIF > DEA / 交叉 / RSI / Leader / TOP RISK
+// 删除：DIF、DEA 数值
+//=====================================================================================================================
+
+var table macdTable =
+     table.new(
+         position.top_right,
+         4,
+         6,
+         border_width=1
+         )
+
+if barstate.islast
+
+    table.cell(
+         macdTable,
+         0,
+         0,
+         "MACD",
+         text_color=color.white,
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
+
+    table.cell(
+         macdTable,
+         1,
+         0,
+         "10M",
+         text_color=color.white,
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
+
+    table.cell(
+         macdTable,
+         2,
+         0,
+         "15M",
+         text_color=color.white,
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
+
+    table.cell(
+         macdTable,
+         3,
+         0,
+         "30M",
+         text_color=color.white,
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
+
+    //=================================================================
+    // DIF > DEA
+    //=================================================================
+
+    table.cell(
+         macdTable,
+         0,
+         1,
+         "DIF > DEA",
+         text_color=color.white,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         1,
+         1,
+         bull10 ? "✓" : "✕",
+         text_color=bull10 ? color.lime : color.red,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         2,
+         1,
+         bull15 ? "✓" : "✕",
+         text_color=bull15 ? color.lime : color.red,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         3,
+         1,
+         bull30 ? "✓" : "✕",
+         text_color=bull30 ? color.lime : color.red,
+         text_size=size.tiny
+         )
+
+    //=================================================================
+    // CROSS
+    //=================================================================
+
+    table.cell(
+         macdTable,
+         0,
+         2,
+         "交叉",
+         text_color=color.white,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         1,
+         2,
+         golden10 ? "金叉" : death10 ? "死叉" : "—",
+         text_color=golden10 ? color.lime : death10 ? color.red : color.gray,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         2,
+         2,
+         golden15 ? "金叉" : death15 ? "死叉" : "—",
+         text_color=golden15 ? color.lime : death15 ? color.red : color.gray,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         3,
+         2,
+         golden30 ? "金叉" : death30 ? "死叉" : "—",
+         text_color=golden30 ? color.lime : death30 ? color.red : color.gray,
+         text_size=size.tiny
+         )
+
+    //=================================================================
+    // RSI
+    //=================================================================
+
+    table.cell(
+         macdTable,
+         0,
+         3,
+         "RSI",
+         text_color=color.white,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         1,
+         3,
+         str.tostring(rsiAdaptive, "#.0"),
+         text_color=
+             rsiAdaptive >= 70 ?
+             color.red :
+             rsiAdaptive <= 30 ?
+             color.lime :
+             color.white,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         2,
+         3,
+         "",
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         3,
+         3,
+         "",
+         text_size=size.tiny
+         )
+
+    //=================================================================
+    // MACD LEADER STATE
+    //=================================================================
+
+    table.cell(
+         macdTable,
+         0,
+         4,
+         "Leader",
+         text_color=color.white,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         1,
+         4,
+         macdLeader >= 0 ? "多头" : "空头",
+         text_color=macdLeader >= 0 ? color.lime : color.red,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         2,
+         4,
+         str.tostring(macdLeader, "#.###"),
+         text_color=macdLeader >= 0 ? color.lime : color.red,
+         text_size=size.tiny
+         )
+
+    table.cell(
+         macdTable,
+         3,
+         4,
+         macdLeader > macdLeader[1] ? "增强" : "减弱",
+         text_color=macdLeader > macdLeader[1] ? color.lime : color.orange,
+         text_size=size.tiny
+         )
+
+    //=================================================================
+    // TOP RISK
+    //=================================================================
+
+    table.cell(
+         macdTable,
+         0,
+         5,
+         "TOP RISK",
+         text_color=color.white,
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
+
+    table.cell(
+         macdTable,
+         1,
+         5,
+         str.tostring(riskScore),
+         text_color=
+             riskScore >= 70 ?
+             color.red :
+             riskScore >= 50 ?
+             color.orange :
+             riskScore >= 30 ?
+             color.yellow :
+             color.lime,
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
+
+    table.cell(
+         macdTable,
+         2,
+         5,
+         riskLevel,
+         text_color=
+             riskScore >= 70 ?
+             color.red :
+             riskScore >= 50 ?
+             color.orange :
+             riskScore >= 30 ?
+             color.yellow :
+             color.lime,
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
+
+    table.cell(
+         macdTable,
+         3,
+         5,
+         "",
+         text_size=size.tiny,
+         bgcolor=color.new(color.gray, 20)
+         )
