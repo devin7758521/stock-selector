@@ -36,4 +36,7 @@ jobs:
         env:
           TZ: America/New_York
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          OUTLOOK_EMAIL: ${{ secrets.OUTLOOK_EMAIL }}
+          OUTLOOK_APP_PASSWORD: ${{ secrets.OUTLOOK_APP_PASSWORD }}
         run: python scripts/us_premarket_scan.py
