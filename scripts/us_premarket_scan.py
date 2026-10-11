@@ -160,7 +160,7 @@ def main():
                 smtp.send_message(msg)
         print(f"Email sent to {recipient} via {smtp_host}:{smtp_port}.")
     else:
-        print("邮件未发送：请在 GitHub Actions Secrets 配置 EMAIL_TO、SMTP_USER、SMTP_PASSWORD、EMAIL_FROM、SMTP_HOST、SMTP_PORT。")
+        raise RuntimeError("邮件未发送：请在 GitHub Actions Secrets 配置 EMAIL_TO、SMTP_USER、SMTP_PASSWORD、EMAIL_FROM、SMTP_HOST、SMTP_PORT；避免任务显示成功但实际未发送。")
     webhook=os.getenv("FEISHU_WEBHOOK_URL","").strip()
     if webhook:
         response=requests.post(webhook,json={"msg_type":"text","content":{"text":report}},timeout=20); response.raise_for_status()
