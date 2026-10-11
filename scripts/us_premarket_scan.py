@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """Python approximation of Adaptive RSI + Volume Profile + MTF MACD + MACD Leader V2."""
 from __future__ import annotations
-import os, sys, math
+import os, sys, math, smtplib
+from email.message import EmailMessage
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 import numpy as np
@@ -104,20 +105,21 @@ def analyze(ticker,name,today):
 
 def render(rs,now,errors):
     eligible=sorted([x for x in rs if x["buy_watch"]],key=lambda x:x["rank_score"],reverse=True)
-    out=[f"📌 美股盘前买入观察排名｜{now:%Y-%m-%d %H:%M ET}","扫描：AAPL MSFT NVDA AMZN META GOOGL TSLA KO",""]
+    out=[f"美股盘前最终排名｜{now:%Y-%m-%d %H:%M ET}","范围：AAPL、MSFT、NVDA、AMZN、META、GOOGL、TSLA、KO",""]
     if eligible:
         for i,x in enumerate(eligible[:5],1):
             signals=[]
             if x["leader_green_alert"]: signals.append("MACD红转绿")
             if x["rsi_cross_alert"]: signals.append("RSI蓝线上穿黄线")
-            out.append(f"{i}. {x['ticker']} {x['name']}｜观察价 {fmt(x['pre'])}｜盘前涨跌 {fmt(x['gap'])}%")
-            out.append(f"   信号：{' + '.join(signals)}｜多周期MACD {x['mtf_bull']}/3｜TOP RISK {x['score']}/100（{x['risk']}）")
-            out.append(f"   风控参考：EMA9 {fmt(x['ema9'])}｜EMA20 {fmt(x['ema20'])}｜VWAP {fmt(x['vwap'])}｜ATR止损参考 {fmt(x['bull_stop'])}")
+            out.append(f"{i}. {x['ticker']} {x['name']}")
+            out.append(f"   观察价：{fmt(x['pre'])}")
+            out.append(f"   触发信号：{' + '.join(signals)}")
+            out.append(f"   风险提示：{x['risk']}（风险分数 {x['score']}/100）；{'盘前跳空偏大，谨慎追高。' if np.isfinite(x['gap']) and x['gap']>3 else '开盘后需再次确认信号，勿仅凭盘前排名下单。'}")
     else:
         out.append("当前没有同时满足提醒、趋势、多周期MACD和风险过滤的标的。今天不强行推荐买入。")
     if errors:
         out.append(f"数据不完整：{len(errors)}只股票获取失败，排名可能不完整。")
-    out.append("这是盘前观察名单，不是保证盈利的买入指令；开盘后需确认价格仍站在VWAP/均线之上，跌破趋势条件则放弃。")
+    out.append("风险声明：这是观察名单，不是买卖指令或收益保证；盘前行情可能变化，开盘后请重新确认，控制仓位并设置止损。")
     return "\n".join(out)
 
 def main():
@@ -130,6 +132,24 @@ def main():
         except Exception as e: errors.append(f"{ticker}: {e}"); print(f"ERROR {ticker}: {e}",file=sys.stderr)
     if not results: raise RuntimeError("8只股票均未能取得有效数据，扫描失败。")
     report=render(results,now,errors); print("\n"+report)
+    recipient=os.getenv("EMAIL_TO","").strip()
+    outlook_user=os.getenv("OUTLOOK_EMAIL","").strip()
+    outlook_password=os.getenv("OUTLOOK_APP_PASSWORD","").strip()
+    if recipient and outlook_user and outlook_password:
+        msg=EmailMessage()
+        msg["Subject"]=f"美股盘前最终排名｜{now:%Y-%m-%d}"
+        msg["From"]=outlook_user
+        msg["To"]=recipient
+        msg.set_content(report)
+        with smtplib.SMTP("smtp.office365.com",587,timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
+            smtp.login(outlook_user,outlook_password)
+            smtp.send_message(msg)
+        print(f"Outlook email sent to {recipient}.")
+    else:
+        print("邮件未发送：请在 GitHub Actions Secrets 配置 EMAIL_TO、OUTLOOK_EMAIL、OUTLOOK_APP_PASSWORD。")
     webhook=os.getenv("FEISHU_WEBHOOK_URL","").strip()
     if webhook:
         response=requests.post(webhook,json={"msg_type":"text","content":{"text":report}},timeout=20); response.raise_for_status()
