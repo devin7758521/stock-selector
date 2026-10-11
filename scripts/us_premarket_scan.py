@@ -133,24 +133,34 @@ def main():
     if not results: raise RuntimeError("8只股票均未能取得有效数据，扫描失败。")
     report=render(results,now,errors); print("\n"+report)
     recipient=os.getenv("EMAIL_TO","").strip()
-    outlook_user=os.getenv("OUTLOOK_EMAIL","").strip()
-    outlook_password=os.getenv("OUTLOOK_APP_PASSWORD","").strip()
+    smtp_user=os.getenv("SMTP_USER",os.getenv("OUTLOOK_EMAIL","")).strip()
+    smtp_password=os.getenv("SMTP_PASSWORD",os.getenv("OUTLOOK_APP_PASSWORD","")).strip()
+    email_from=os.getenv("EMAIL_FROM",smtp_user).strip()
     smtp_host=os.getenv("SMTP_HOST","smtp-mail.outlook.com").strip() or "smtp-mail.outlook.com"
-    if recipient and outlook_user and outlook_password:
+    try:
+        smtp_port=int(os.getenv("SMTP_PORT","587"))
+    except ValueError:
+        raise RuntimeError("SMTP_PORT 必须是数字，例如 QQ 邮箱 465、Outlook 常用 587。")
+    if recipient and smtp_user and smtp_password and email_from:
         msg=EmailMessage()
         msg["Subject"]=f"美股盘前最终排名｜{now:%Y-%m-%d}"
-        msg["From"]=outlook_user
+        msg["From"]=email_from
         msg["To"]=recipient
         msg.set_content(report)
-        with smtplib.SMTP(smtp_host,587,timeout=30) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(outlook_user,outlook_password)
-            smtp.send_message(msg)
-        print(f"Outlook email sent to {recipient}.")
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_host,smtp_port,timeout=30) as smtp:
+                smtp.login(smtp_user,smtp_password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_host,smtp_port,timeout=30) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.ehlo()
+                smtp.login(smtp_user,smtp_password)
+                smtp.send_message(msg)
+        print(f"Email sent to {recipient} via {smtp_host}:{smtp_port}.")
     else:
-        print("邮件未发送：请在 GitHub Actions Secrets 配置 EMAIL_TO、OUTLOOK_EMAIL、OUTLOOK_APP_PASSWORD。")
+        print("邮件未发送：请在 GitHub Actions Secrets 配置 EMAIL_TO、SMTP_USER、SMTP_PASSWORD、EMAIL_FROM、SMTP_HOST、SMTP_PORT。")
     webhook=os.getenv("FEISHU_WEBHOOK_URL","").strip()
     if webhook:
         response=requests.post(webhook,json={"msg_type":"text","content":{"text":report}},timeout=20); response.raise_for_status()
