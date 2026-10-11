@@ -135,13 +135,14 @@ def main():
     recipient=os.getenv("EMAIL_TO","").strip()
     outlook_user=os.getenv("OUTLOOK_EMAIL","").strip()
     outlook_password=os.getenv("OUTLOOK_APP_PASSWORD","").strip()
+    smtp_host=os.getenv("SMTP_HOST","smtp-mail.outlook.com").strip() or "smtp-mail.outlook.com"
     if recipient and outlook_user and outlook_password:
         msg=EmailMessage()
         msg["Subject"]=f"美股盘前最终排名｜{now:%Y-%m-%d}"
         msg["From"]=outlook_user
         msg["To"]=recipient
         msg.set_content(report)
-        with smtplib.SMTP("smtp.office365.com",587,timeout=30) as smtp:
+        with smtplib.SMTP(smtp_host,587,timeout=30) as smtp:
             smtp.ehlo()
             smtp.starttls()
             smtp.ehlo()
