@@ -63,6 +63,11 @@ def analyze(ticker,name,today):
             elif d.iloc[-1]<s.iloc[-1] and d.iloc[-2]>=s.iloc[-2]: cross="死叉"
         mtf[n]={"bull":bool(d.iloc[-1]>s.iloc[-1]),"cross":cross,"weak":bool(h.iloc[-1]<h.iloc[-2] and h.iloc[-1]>0) if len(h)>1 else False}
     sema=ema(c,12); lema=ema(c,26); leader=(sema+ema(c-sema,12))-(lema+ema(c-lema,26))
+    # 新增提醒层，不改动原有指标公式/参数
+    leader_green=((leader>=0)&(leader.shift(1)<0))
+    rsi_cross_up=((r>rma)&(r.shift(1)<=rma.shift(1)))
+    leader_green_alert=bool(leader_green.reindex(pre.index).fillna(False).any())
+    rsi_cross_alert=bool(rsi_cross_up.reindex(pre.index).fillna(False).any())
     vp=bars.tail(200); lo=float(vp.Low.min()); hi=float(vp.High.max()); poc=val=vah=float("nan")
     if hi>lo:
         levels=np.linspace(lo,hi,200); vols=np.zeros(200)
@@ -83,24 +88,36 @@ def analyze(ticker,name,today):
     score+=15 if len(bull)>1 and bool(bull.iloc[-2]) else 0
     score+=5 if rv>70 and mtf[15]["weak"] else 0; score=min(score,100)
     risk="极高风险" if score>=70 else "高风险" if score>=50 else "注意" if score>=30 else "低风险"
+    # 买入观察排名：优先双提醒、趋势站上均线/VWAP、多周期MACD偏多、风险较低
+    trend_ok=bool(c.iloc[-1]>e9.iloc[-1] and c.iloc[-1]>e20.iloc[-1] and c.iloc[-1]>vwap.iloc[-1])
+    mtf_bull=sum(1 for n in (10,15,30) if mtf[n]["bull"])
+    alert_count=int(leader_green_alert)+int(rsi_cross_alert)
+    rank_score=alert_count*25+mtf_bull*8+(10 if trend_ok else 0)+(8 if bd else 0)-score*.6
+    if rv>=75: rank_score-=12
+    if np.isfinite(gap) and gap>3: rank_score-=8
+    if np.isfinite(gap) and gap < -2: rank_score-=8
+    buy_watch=bool(alert_count>0 and trend_ok and mtf_bull>=2 and score<50 and 45<=rv<=72)
     return dict(ticker=ticker,name=name,close=pc,pre=pp,gap=gap,rsi=rv,rsi_ma=rma.iloc[-1],ema9=e9.iloc[-1],ema20=e20.iloc[-1],vwap=vwap.iloc[-1],
       bull_div=bd,bear_div=sd,bull_trigger=bool(bull.iloc[-1]),bear_trigger=bool(bear.iloc[-1]),bull_stop=bars.Low.iloc[-1]-atr.iloc[-1]*3,bear_stop=bars.High.iloc[-1]+atr.iloc[-1]*3,
       mtf=mtf,leader=leader.iloc[-1],leader_state="多头" if leader.iloc[-1]>=0 else "空头",leader_momentum="增强" if leader.iloc[-1]>leader.iloc[-2] else "减弱",
-      poc=poc,val=val,vah=vah,score=score,risk=risk)
+      poc=poc,val=val,vah=vah,score=score,risk=risk,leader_green_alert=leader_green_alert,rsi_cross_alert=rsi_cross_alert,alert_count=alert_count,trend_ok=trend_ok,mtf_bull=mtf_bull,rank_score=rank_score,buy_watch=buy_watch)
 
 def render(rs,now,errors):
-    rs=sorted(rs,key=lambda x:(np.isfinite(x["gap"]),x["gap"] if np.isfinite(x["gap"]) else -999),reverse=True)
-    out=[f"📊 美股盘前扫描｜V2逻辑移植版｜{now:%Y-%m-%d %H:%M ET}","范围：AAPL MSFT NVDA AMZN META GOOGL TSLA KO",
-      "使用5分钟行情近似执行 Pine 逻辑；MTF MACD由5分钟K线重采样。不是TradingView原生运行，数值可能有差异。",""]
-    for x in rs:
-        out += [f"【{x['ticker']} {x['name']}】盘前 {fmt(x['pre'])}｜前收 {fmt(x['close'])}｜跳空 {fmt(x['gap'])}%",
-          f"RSI {fmt(x['rsi'],1)} / 信号线 {fmt(x['rsi_ma'],1)}｜EMA9 {fmt(x['ema9'])}｜EMA20 {fmt(x['ema20'])}｜VWAP {fmt(x['vwap'])}",
-          f"背离候选：底 {x['bull_div']} / 顶 {x['bear_div']}｜RSI触发：{'多头' if x['bull_trigger'] else '空头' if x['bear_trigger'] else '无'}",
-          f"MTF MACD：10m {'多' if x['mtf'][10]['bull'] else '空'}({x['mtf'][10]['cross']})；15m {'多' if x['mtf'][15]['bull'] else '空'}({x['mtf'][15]['cross']})；30m {'多' if x['mtf'][30]['bull'] else '空'}({x['mtf'][30]['cross']})",
-          f"Leader：{x['leader_state']}/{x['leader_momentum']} ({fmt(x['leader'],4)})｜VP POC {fmt(x['poc'])} / VAL {fmt(x['val'])} / VAH {fmt(x['vah'])}",
-          f"TOP RISK：{x['score']}/100（{x['risk']}）｜ATR×3止损参考：多 {fmt(x['bull_stop'])} / 空 {fmt(x['bear_stop'])}",""]
-    if errors: out+=["⚠️ 部分数据失败："]+errors+[""]
-    out.append("仅供观察，不是自动买卖指令。盘前行情可能延迟/缺失；Pine视觉缩放、polyline及部分状态无法在Python完全复现。")
+    eligible=sorted([x for x in rs if x["buy_watch"]],key=lambda x:x["rank_score"],reverse=True)
+    out=[f"📌 美股盘前买入观察排名｜{now:%Y-%m-%d %H:%M ET}","扫描：AAPL MSFT NVDA AMZN META GOOGL TSLA KO",""]
+    if eligible:
+        for i,x in enumerate(eligible[:5],1):
+            signals=[]
+            if x["leader_green_alert"]: signals.append("MACD红转绿")
+            if x["rsi_cross_alert"]: signals.append("RSI蓝线上穿黄线")
+            out.append(f"{i}. {x['ticker']} {x['name']}｜观察价 {fmt(x['pre'])}｜盘前涨跌 {fmt(x['gap'])}%")
+            out.append(f"   信号：{' + '.join(signals)}｜多周期MACD {x['mtf_bull']}/3｜TOP RISK {x['score']}/100（{x['risk']}）")
+            out.append(f"   风控参考：EMA9 {fmt(x['ema9'])}｜EMA20 {fmt(x['ema20'])}｜VWAP {fmt(x['vwap'])}｜ATR止损参考 {fmt(x['bull_stop'])}")
+    else:
+        out.append("当前没有同时满足提醒、趋势、多周期MACD和风险过滤的标的。今天不强行推荐买入。")
+    if errors:
+        out.append(f"数据不完整：{len(errors)}只股票获取失败，排名可能不完整。")
+    out.append("这是盘前观察名单，不是保证盈利的买入指令；开盘后需确认价格仍站在VWAP/均线之上，跌破趋势条件则放弃。")
     return "\n".join(out)
 
 def main():
