@@ -39,4 +39,5 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           OUTLOOK_EMAIL: ${{ secrets.OUTLOOK_EMAIL }}
           OUTLOOK_APP_PASSWORD: ${{ secrets.OUTLOOK_APP_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
         run: python scripts/us_premarket_scan.py
